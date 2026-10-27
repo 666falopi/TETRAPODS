@@ -1,0 +1,1 @@
+import {mesh,setRadii,bounds,nativeHeight} from './geometry.js?v=3';self.onmessage=({data:m})=>{setRadii(m.root,m.tip);const coarse=mesh(256).volume,fine=mesh(512).volume;self.postMessage({id:m.id,volume10:fine*(10/nativeHeight)**3,dimensions10:bounds.map(b=>(b[1]-b[0])*10/nativeHeight),change:100*Math.abs(fine-coarse)/fine});};

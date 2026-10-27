@@ -1,0 +1,12 @@
+import{parseSTL,normalize,topology,simplify,frame,toWorld,raster,intervalBlocks,draftStatistics}from './core.js?v=5';import{meshField}from './mesher.js';let source,meta,health,cache,key;
+self.onmessage=({data:m})=>{try{
+if(m.type==='load'){const a=parseSTL(m.buffer);health=topology(a);meta=normalize(a);source=meta.positions;cache=null;self.postMessage({type:'loaded',id:m.id,meta:{center:meta.center,scale:meta.scale,size:meta.size},health,positions:source.slice()});return;}
+if(!source)throw Error('Load an STL first.');
+if(m.type==='simplify'){const p=simplify(source,m.cell),stats=topology(p);self.postMessage({type:'simplified',id:m.id,positions:p,health:stats,cell:m.cell});return;}
+if(m.type==='analyse'){const f=frame(m.a,m.b),k=[m.a,m.b,m.res].join(',');if(key!==k||!cache){cache=raster(source,f,m.res);key=k;}const r=cache,offset=(r.min[2]+r.max[2])/2+m.slide/100*(r.max[2]-r.min[2])/2,blocked=[0,0],points=[[],[]];let multiple=0;
+for(let i=0;i<r.cols.length;i++){const list=r.cols[i];if(list.length>2)multiple++;const flags=intervalBlocks(list,offset);for(let s=0;s<2;s++)if(flags[s]){blocked[s]++;const x=i%r.res,y=Math.floor(i/r.res);points[s].push(...toWorld([r.lo[0]+(x+.5)*r.dx,r.lo[1]+(y+.5)*r.dy,s===0?list[list.length-1]:list[0]],f));}}
+const extent=r.hi.map((v,i)=>v-r.lo[i]),extra=extent.map(v=>v*.04),lo=r.lo.map((v,i)=>v-extra[i]),hi=r.hi.map((v,i)=>v+extra[i]);
+function cavity(x,y,z){const ix=Math.floor((x-r.lo[0])/r.dx),iy=Math.floor((y-r.lo[1])/r.dy);if(ix<0||iy<0||ix>=r.res||iy>=r.res)return 1;const list=r.cols[ix+r.res*iy];let d=1;for(let j=0;j<list.length;j+=2){const a=list[j],b=list[j+1];if(z>=a&&z<=b)return -Math.min(z-a,b-z);d=Math.min(d,Math.abs(z-a),Math.abs(z-b));}return d;}
+const parts=[0,1].map(s=>{const field=(X,Y,Z)=>{const p=[X,Y,Z].map((v,i)=>lo[i]+(v+4.1)/8.2*(hi[i]-lo[i])),[x,y,z]=p;return Math.min(x-r.lo[0],r.hi[0]-x,y-r.lo[1],r.hi[1]-y,z-r.lo[2],r.hi[2]-z,s===0?z-offset:offset-z,cavity(x,y,z));};const out=meshField(field,m.res>100?60:44).positions;for(let i=0;i<out.length;i+=3){const p=[0,1,2].map(j=>lo[j]+(out[i+j]+4.1)/8.2*(hi[j]-lo[j])),w=toWorld(p,f);out.set(w,i);}return out;});
+self.postMessage({type:'analysis',id:m.id,parts,blocked,points,draft:draftStatistics(source,f.n,offset,3,health.volume<0?-1:1),odd:r.odd,covered:r.covered,multiple,offset,normal:f.n,frame:f,res:m.res,extent,valid:!health.boundary&&!health.nonmanifold&&!health.inconsistent&&!health.degenerate&&r.odd===0});}
+}catch(e){self.postMessage({type:'error',id:m.id,message:e.message})}};

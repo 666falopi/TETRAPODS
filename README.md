@@ -1,32 +1,34 @@
-# Tetrapod Volume Studio
+# Hard Matter / Sculpture Lab
 
-Interactive browser app for exploring a generic tetrapod and estimating its solid volume.
+One landing page for the complete collection of browser tools: clouds, waves, tetrapods and mould studies.
 
-Live app: https://tetrapod-volume-studio.jerez-diseno.chatgpt.site/
+## Run the complete suite
 
-## Run locally
-
-Requires Python 3. From this folder run:
+Install Python 3, then run this command from the repository root:
 
 ```sh
 python -m http.server 8000
 ```
 
-Open http://localhost:8000 in a browser. On Windows, `py -m http.server 8000` also works. Serve over HTTP so browser modules and workers load correctly.
+On Windows you can also use `py -m http.server 8000`. On Linux use `python3 -m http.server 8000` if needed.
 
-## Controls
+Open http://localhost:8000/ to see the dashboard. Keep the server running while using the apps. HTTP is required for browser modules, workers and model loading. No build step or package installation is needed. The pages use relative links so the collection can also be hosted together under one folder.
 
-- Total height: 2–25 cm.
-- Root and tip radii shared by all four arms.
-- Drag to orbit; scroll to zoom.
-- Live volume in cm³ and litres, plus bounding dimensions.
+## Tools
 
-## Geometry and calculation
+| Folder | Tool |
+| --- | --- |
+| `/` | Hard Matter landing / dashboard |
+| `cloud/` | Branch-guided cloud generator |
+| `wave/` | Barrel wave and foam generator |
+| `tetrapod-mould/` | Tetrapod cloud mould, editable planes and removal-order study |
+| `two-piece/` | Upload an STL and examine a two-piece mould, draft statistics and study exports |
+| `tetrapod-volume/` | Generic tetrapod calculator, height 2–25 cm with adjustable root and tip radii |
 
-Four overlapping circular frustums follow tetrahedral axes. The union is uniformly scaled to the chosen vertical height. Analytic ray exits define its outer surface; a closed sampled mesh estimates volume, counting the overlapping centre once. A worker compares mesh refinements. This is a generic geometric study, not a standard industrial tetrapod. Volume is approximate and excludes casting waste, shrinkage and voids.
+The tetrapod volume tool counts the overlapping centre once and reports approximate solid volume. Mould tools are geometric prototypes; draft maps and sampled release checks do not certify that a mould can be manufactured and released.
 
-## Files
+## Implementation
 
-`index.html` and `style.css` provide the interface; `app.js` renders the model and handles controls; `geometry.js` defines the shape; worker files compute volume away from the interface. See `measurement.json` for reference measurements.
+Static HTML, CSS and JavaScript, with browser 3D rendering and workers for heavier calculations. Three.js is bundled with the tools that use it, with its licence notice in the source. The tetrapod mould folder includes its generated reference model. Uploaded personal STL files are not included in this repository.
 
-Plain HTML, CSS and JavaScript. No build step or package installation is required.
+This repository contains the current suite as a snapshot. Future edits to the separately hosted Sites apps are not automatically synced here.
