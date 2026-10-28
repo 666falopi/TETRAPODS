@@ -22,7 +22,7 @@ def snapshot(sha, dest, latest=False):
             path = pathlib.PurePosixPath(member.name)
             if not member.isfile() or '..' in path.parts or path.is_absolute():
                 continue
-            if not (path.parts[0] in APPS or (len(path.parts) == 1 and path.suffix in {'.html', '.css', '.js', '.json'})):
+            if not (path.parts[0] in (APPS | {'bump-cylinder'}) or (len(path.parts) == 1 and path.suffix in {'.html', '.css', '.js', '.json'})):
                 continue
             content = archive.extractfile(member).read()
             target = dest.joinpath(*path.parts)
