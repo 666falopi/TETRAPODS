@@ -5,10 +5,11 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
 concurrency:
-  group: pages
+  group: commit-previews
   cancel-in-progress: false
 jobs:
   publish:
@@ -26,5 +27,25 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
+      # Branch-source Pages may still run its built-in publisher. Publish our
+      # complete artifact last so it cannot erase the commit preview folders.
+      - name: Wait for any built-in Pages publication
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const deadline = Date.now() + 10 * 60 * 1000;
+            const discoveryUntil = Date.now() + 45 * 1000;
+            while (true) {
+              const response = await github.rest.actions.listWorkflowRunsForRepo({
+                ...context.repo, head_sha: context.sha, per_page: 100
+              });
+              const legacy = response.data.workflow_runs.filter(run =>
+                run.name === 'pages build and deployment' && run.id !== context.runId
+              );
+              if (legacy.length && legacy.every(run => run.status === 'completed')) break;
+              if (!legacy.length && Date.now() > discoveryUntil) break;
+              if (Date.now() > deadline) throw new Error('Built-in Pages publication did not finish; rerun this workflow.');
+              await new Promise(resolve => setTimeout(resolve, 10000));
+            }
       - uses: actions/deploy-pages@v4
         id: deployment
