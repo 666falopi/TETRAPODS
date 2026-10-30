@@ -47,8 +47,22 @@ function cells(u, v, p, seed) {
   return Math.min(1, Math.sqrt(best));
 }
 
+// Concentric ripples radiating from one seeded point per lattice cell, like raindrops on water.
+// Neighbouring cells overlap so rings interfere; distances are in cell units and u wraps via cx.
+function ripples(u, v, p, rings, seed) {
+  const x = u * p, y = v * p, ix = Math.floor(x), iy = Math.floor(y);
+  let sum = 0;
+  for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) {
+    const cx = ix + i, cy = iy + j, wx = wrap(cx, p);
+    const dx = cx + hash(wx, cy, seed) - x, dy = cy + hash(wx, cy, seed + 77) - y, d = Math.hypot(dx, dy);
+    sum += Math.max(0, 1 - d / 1.5) ** 2 * Math.cos(d * rings * Math.PI * 2);
+  }
+  return Math.min(1, Math.max(0, 0.5 + sum * 0.6));
+}
+
 function height(kind, u, v, s) {
   switch (kind) {
+    case 'ripples': return ripples(u, v, s.scale, s.detail, s.seed);
     case 'ridged': return fbm(u, v, s.scale, s.detail, s.seed, true);
     case 'cells': return cells(u, v, s.scale, s.seed);
     case 'stripes': return (Math.sin((v + (fbm(u, v, s.scale, s.detail, s.seed) - 0.5) * 0.3) * s.scale * Math.PI * 2) + 1) / 2;
@@ -181,7 +195,7 @@ function state() {
   return s;
 }
 
-let dirty = true, running = true;
+let dirty = true, running = true, stepTarget = 0;
 
 function restartSim() {
   const s = state(), nx = s.grid;
@@ -224,6 +238,13 @@ function tick() {
     if (sim.steps >= RD_MAX_STEPS) running = false;
     dirty = true;
   }
+  // A shared link of a reaction-diffusion state replays the simulation up to the shared step.
+  if (s.kind === 'reaction' && sim.steps < stepTarget) {
+    const t0 = performance.now();
+    while (sim.steps < stepTarget && performance.now() - t0 < 12) simStep(Math.min(50, stepTarget - sim.steps), s.feed, s.kill);
+    if (sim.steps >= stepTarget) running = stepTarget >= RD_MAX_STEPS ? false : running;
+    dirty = true;
+  }
   if (dirty) { dirty = false; draw(); labels(); }
   requestAnimationFrame(tick);
 }
@@ -257,7 +278,39 @@ $('export').addEventListener('click', () => {
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   });
 });
-restartSim();
+// Share link: every control goes in the URL hash, plus the
+// simulation step for reaction-diffusion, so the link rebuilds exactly this state.
+const SHARED = [...document.querySelectorAll('input[id],select[id]')].map(el => el.id).filter(id => !['auto', 'depth', 'wall'].includes(id) && $(id).closest('.capture') === null);
+const isCheck = id => $(id).type === 'checkbox';
+const readControl = id => isCheck(id) ? ($(id).checked ? '1' : '0') : $(id).value;
+
+function shareUrl() {
+  const q = new URLSearchParams();
+  for (const id of SHARED) q.set(id, readControl(id));
+  if ($('kind').value === 'reaction') { q.set('steps', sim.steps); if (!running) q.set('paused', '1'); }
+  return location.origin + location.pathname + location.search + '#' + q;
+}
+
+function applyHash() {
+  const q = new URLSearchParams(location.hash.slice(1));
+  for (const id of SHARED) {
+    if (!q.has(id)) continue;
+    if (isCheck(id)) $(id).checked = q.get(id) === '1'; else $(id).value = q.get(id);
+  }
+  restartSim();
+  stepTarget = Math.min(RD_MAX_STEPS, Math.max(0, +q.get('steps') || 0));
+  if (q.get('paused') === '1') running = false;
+}
+
+$('share').addEventListener('click', async () => {
+  const url = shareUrl(), b = $('share');
+  history.replaceState(null, '', url);
+  try { await navigator.clipboard.writeText(url); b.textContent = 'LINK COPIED ✓'; }
+  catch { b.textContent = 'COPY FROM ADDRESS BAR'; }
+  setTimeout(() => { b.textContent = 'COPY SHARE LINK ⧉'; }, 2000);
+});
+
+applyHash();
 tick();
 
 // Capture: freeze the current state and show it on a cylinder, either as a texture or as real
