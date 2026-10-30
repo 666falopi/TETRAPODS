@@ -195,7 +195,7 @@ function state() {
   return s;
 }
 
-let dirty = true, running = true, stepTarget = 0;
+let dirty = true, running = true, stepTarget = 0, pendingCapture = false;
 
 function restartSim() {
   const s = state(), nx = s.grid;
@@ -245,6 +245,7 @@ function tick() {
     if (sim.steps >= stepTarget) running = stepTarget >= RD_MAX_STEPS ? false : running;
     dirty = true;
   }
+  if (pendingCapture && (s.kind !== 'reaction' || sim.steps >= stepTarget)) { pendingCapture = false; capture(); }
   if (dirty) { dirty = false; draw(); labels(); }
   requestAnimationFrame(tick);
 }
@@ -280,13 +281,15 @@ $('export').addEventListener('click', () => {
 });
 // Share link: every control goes in the URL hash, plus the
 // simulation step for reaction-diffusion, so the link rebuilds exactly this state.
-const SHARED = [...document.querySelectorAll('input[id],select[id]')].map(el => el.id).filter(id => !['auto', 'depth', 'wall'].includes(id) && $(id).closest('.capture') === null);
+const SHARED = [...document.querySelectorAll('input[id],select[id]')].map(el => el.id);
 const isCheck = id => $(id).type === 'checkbox';
 const readControl = id => isCheck(id) ? ($(id).checked ? '1' : '0') : $(id).value;
 
 function shareUrl() {
   const q = new URLSearchParams();
   for (const id of SHARED) q.set(id, readControl(id));
+  q.set('view', viewMode);
+  if (captured) q.set('captured', '1');
   if ($('kind').value === 'reaction') { q.set('steps', sim.steps); if (!running) q.set('paused', '1'); }
   return location.origin + location.pathname + location.search + '#' + q;
 }
@@ -300,6 +303,8 @@ function applyHash() {
   restartSim();
   stepTarget = Math.min(RD_MAX_STEPS, Math.max(0, +q.get('steps') || 0));
   if (q.get('paused') === '1') running = false;
+  if (q.get('view') === 'geometry') viewMode = 'geometry';
+  pendingCapture = q.get('captured') === '1';
 }
 
 $('share').addEventListener('click', async () => {
@@ -310,8 +315,6 @@ $('share').addEventListener('click', async () => {
   setTimeout(() => { b.textContent = 'COPY SHARE LINK ⧉'; }, 2000);
 });
 
-applyHash();
-tick();
 
 // Capture: freeze the current state and show it on a cylinder, either as a texture or as real
 // displaced geometry built from the same height field.
@@ -635,3 +638,6 @@ $('exportStl').addEventListener('click', () => {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 });
+
+applyHash();
+tick();
