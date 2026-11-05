@@ -1,0 +1,1 @@
+import {build} from './core-v2.mjs';import {buildSections} from '../section-surfaces.mjs?v=5';self.onmessage=async({data})=>{try{let m=data.surfaceEngine==='volume'?build(data):await buildSections('coral',data);postMessage(m,[m.positions.buffer,m.indices.buffer]);}catch(e){postMessage({error:e.message});}};
