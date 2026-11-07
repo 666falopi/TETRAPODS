@@ -1,0 +1,1 @@
+import {build} from './core.mjs';import {buildSections} from '../section-surfaces.mjs?v=neck1';self.onmessage=async({data})=>{try{let m=data.surfaceEngine==='volume'?build(data):await buildSections('fungi',data);postMessage(m,[m.positions.buffer,m.indices.buffer]);}catch(e){postMessage({error:e.message});}};
