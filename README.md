@@ -25,6 +25,8 @@ Open http://localhost:8000/ to see the dashboard. Keep the server running while 
 | `two-piece/` | Upload an STL and examine a two-piece mould, draft statistics and study exports |
 | `tetrapod-volume/` | Generic tetrapod calculator, height 2–25 cm with adjustable root and tip radii |
 | `texture-generator/` | Seamless procedural textures with PNG and normal-map export |
+| `revolution-generator/` | Draw a profile curve, spin it into a solid of revolution, export STL |
+| `rd-sphere/` | Gray-Scott reaction-diffusion grown on a sphere; extrude the white or black parts, branching control, STL export |
 
 The tetrapod volume tool counts the overlapping centre once and reports approximate solid volume. Mould tools are geometric prototypes; draft maps and sampled release checks do not certify that a mould can be manufactured and released.
 
