@@ -406,12 +406,19 @@ function stlBlob() {
 
 // ---------- wiring ----------
 function restart() { const s = readState(); simReset(s.res, s.seed); running = true; stepTarget = 0; dirty = true; }
-const live = () => { readouts(readState()); dirty = true; };
+// Keep every parameter in the address bar so the page can be shared as it is (debounced).
+let urlTimer = 0;
+function syncUrl() {
+  clearTimeout(urlTimer);
+  urlTimer = setTimeout(() => { try { history.replaceState(null, '', location.pathname + location.search + '#' + encodeURIComponent(JSON.stringify(urlData()))); } catch { /* ignore */ } }, 300);
+}
+const urlData = () => (running ? readState() : {...readState(), steps: sim.steps});
+const live = () => { readouts(readState()); dirty = true; syncUrl(); };
 for (const id of ['branching', 'part', 'dir', 'height', 'level', 'round', 'thick', 'smooth', 'vary', 'diameter', 'lattice', 'cell', 'wall', 'depth', 'crest', 'stopAt', 'soften']) $(id).addEventListener('input', live);
 for (const id of ['res', 'seed']) $(id).addEventListener('input', () => { live(); restart(); });
 $('dice').addEventListener('click', () => { $('seed').value = Math.floor(Math.random() * 100000); restart(); live(); });
 $('restart').addEventListener('click', restart);
-$('run').addEventListener('click', () => { running = !running && sim.steps < MAX_STEPS; dirty = true; });
+$('run').addEventListener('click', () => { running = !running && sim.steps < MAX_STEPS; dirty = true; setTimeout(syncUrl, 400); });
 $('wire').addEventListener('input', () => { material.wireframe = $('wire').checked; });
 $('resetView').addEventListener('click', () => { cam.yaw = 0.6; fitView(cam.bound); });
 function setDefaults() { for (const [k, v] of Object.entries(DEFAULTS)) { if (typeof v === 'boolean') $(k).checked = v; else $(k).value = v; } }

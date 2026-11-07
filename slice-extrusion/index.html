@@ -1,0 +1,36 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Slice Extrusion</title><meta name="description" content="Stack circular slices made by Voronoi or reaction-diffusion, blend between them, twist them and export the solid as STL."><link rel="stylesheet" href="style.css"></head><body>
+<header><a href="../" aria-label="Back to dashboard">S / E</a><span>FORM STUDIES <b>—</b> SLICE EXTRUSION</span><span class="status">● LIVE GENERATOR</span></header>
+<main><section class="parameters"><div class="eyebrow">SLICES / INTERPOLATION / TWIST</div><h1>Stack of<span>slices.</span></h1><p class="intro">Each slice is a pattern inside a circle. The slices are blended along the height and each one is turned a little further than the last.</p>
+<div class="control"><label>01 / SLICES</label>
+<label for="gen">Slice generator</label><select id="gen"><option value="rd">Reaction–diffusion</option><option value="voronoi">Voronoi</option></select>
+<label for="slices">Slice steps (number of slices) <output></output></label><input id="slices" type="range" min="2" max="40" step="1">
+<label for="interp">Interpolation between slices</label><select id="interp"><option value="lin">Linear</option><option value="exp">Exponential (holds, then jumps)</option><option value="log">Logarithmic (jumps, then holds)</option></select>
+<label for="rot">Slice rotation · ° per slice <output></output></label><input id="rot" type="range" min="-60" max="60" step="0.5">
+<label for="rotNoise">Rotation noise · ± ° per slice <output></output></label><input id="rotNoise" type="range" min="0" max="90" step="0.5">
+<label for="between">Samples between slices <output></output></label><input id="between" type="range" min="2" max="14" step="1"><canvas id="strip" width="640" height="64" aria-label="Preview of the slices"></canvas></div>
+<div class="control" id="rdBox"><label>02 / REACTION–DIFFUSION</label>
+<label for="pattern">Pattern</label><select id="pattern"><option value="maze">Maze</option><option value="coral">Coral</option><option value="spots">Spots</option><option value="worms">Worms</option></select>
+<label for="warm">Warm-up before the first slice (steps) <output></output></label><input id="warm" type="range" min="0" max="4000" step="100">
+<label for="interval">Steps between slices <output></output></label><input id="interval" type="range" min="5" max="300" step="5"></div>
+<div class="control" id="vorBox"><label>02 / VORONOI</label>
+<label for="vstyle">Style</label><select id="vstyle"><option value="web">Organic web (strands, bulbs, open cells)</option><option value="classic">Classic (cells or walls, in the circle)</option></select>
+<label for="cells">Cells <output></output></label><input id="cells" type="range" min="4" max="150" step="1">
+<label for="drift">Drift of the cell centres between slices <output></output></label><input id="drift" type="range" min="0" max="1" step="0.01">
+<div id="classicBox"><label class="check"><input id="invert" type="checkbox"> Invert (walls instead of cells)</label></div>
+<div id="webBox">
+<label for="evenness">Evenness (relaxation passes) <output></output></label><input id="evenness" type="range" min="0" max="6" step="1">
+<label for="strand">Strand thickness <output></output></label><input id="strand" type="range" min="0.02" max="0.3" step="0.005">
+<label for="neck">Neck (thin in the middle of a strand) <output></output></label><input id="neck" type="range" min="0" max="0.85" step="0.01">
+<label for="tip">Bulb at strand ends <output></output></label><input id="tip" type="range" min="1" max="4" step="0.05">
+<label for="swell">Swelling at junctions <output></output></label><input id="swell" type="range" min="0" max="3" step="0.05">
+<label for="prune">Pruning (open lakes, loose branches) <output></output></label><input id="prune" type="range" min="0" max="0.6" step="0.01">
+<label for="fillet">Fillet where strands meet <output></output></label><input id="fillet" type="range" min="0" max="1" step="0.01"></div></div>
+<div class="control"><label>03 / SOLID</label>
+<label for="height">Height · mm</label><input id="height" type="number" min="5" max="500" step="1">
+<label for="diameter">Diameter · mm (circle, or half the web width)</label><input id="diameter" type="number" min="10" max="300" step="1">
+<label for="level">Threshold <output></output></label><input id="level" type="range" min="0.05" max="0.95" step="0.01">
+<label for="res">Grid resolution</label><select id="res"><option value="80">Draft · 80</option><option value="112">Medium · 112</option><option value="160">Fine · 160</option></select>
+<label for="seed">Seed</label><div class="row"><input id="seed" type="number" min="0" max="999999" step="1"><button id="dice">RANDOMISE ⚄</button></div><p class="hint" id="dims"></p></div>
+<div class="control"><button id="exportStl" class="primary">EXPORT STL ↓</button><button id="share">COPY SHARE LINK ⧉</button><button id="reset">RESET ↺</button></div></section>
+<section class="capture"><div class="model-head"><span>LIVE SOLID</span><span id="info"></span></div><div class="viewbar"><label class="check"><input id="wire" type="checkbox"> Wireframe</label><label class="check"><input id="auto" type="checkbox" checked> Auto-rotate</label><button id="resetView">RESET VIEW</button></div><p class="hint" id="warn"></p><div class="stage" id="stage"></div></section></main>
+<footer>THE SOLID IS GENERATED IN THE BROWSER / NOTHING IS UPLOADED</footer><script type="module" src="app.js"></script><script>setTimeout(function(){if(!window.__seLoaded){document.getElementById("warn").textContent=location.protocol==="file:"?"The script could not load from file://. Browsers block modules there: serve the repo over http and open /slice-extrusion/":"The script failed to load. Open the browser console for the error."}},2500)</script></body></html>

@@ -8,7 +8,7 @@ import tarfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 OUT = ROOT / '_site'
-APPS = {'cloud', 'wave', 'tetrapod-mould', 'two-piece', 'tetrapod-volume', 'texture-generator', 'bump-cylinder', 'revolution-generator', 'rd-sphere', 'rd-branches'}
+APPS = {'cloud', 'wave', 'tetrapod-mould', 'two-piece', 'tetrapod-volume', 'texture-generator', 'bump-cylinder', 'revolution-generator', 'rd-sphere', 'rd-branches', 'slice-extrusion'}
 
 def git(*args):
     return subprocess.check_output(['git', *args], cwd=ROOT)

@@ -13,12 +13,126 @@ const PRESETS = {
   cylinder: ['Cylinder', [[0, 0, 0], [20, 0, 0], [20, 60, 0], [0, 60, 0]]],
 };
 const DEFAULTS = {height: 60, radius: 25, around: 96, curve: 14, wall: 0, preset: 'vase'};
+const TEX_DEFAULTS = {texKind: 'none', texScale: 6, texDetail: 4, texDepth: 1.5, texDir: 'out', texContrast: 1, texLevel: 0.5, texBevel: 1, texRd: 'coral', texSteps: 2500, texSeed: 1, texFlat: false};
+const TEX_NUMS = ['texScale', 'texDetail', 'texDepth', 'texContrast', 'texLevel', 'texBevel', 'texSteps', 'texSeed'];
 const presetPts = key => PRESETS[key][1].map(([x, y, s]) => ({x, y, s: !!s}));
 for (const [k, [name]] of Object.entries(PRESETS)) $('preset').add(new Option(name, k));
 
 let pts = presetPts(DEFAULTS.preset), sel = -1, undoStack = [];
 const num = (id, lo, hi) => Math.min(hi, Math.max(lo, +$(id).value || lo));
-const state = () => ({height: num('height', 1, 1000), radius: num('radius', 1, 500), around: +$('around').value, curve: +$('curve').value, wall: +$('wall').value});
+const state = () => ({height: num('height', 1, 1000), radius: num('radius', 1, 500), around: +$('around').value, curve: +$('curve').value, wall: +$('wall').value,
+  texKind: $('texKind').value, texDir: $('texDir').value, texRd: $('texRd').value, texFlat: $('texFlat').checked, ...Object.fromEntries(TEX_NUMS.map(id => [id, +$(id).value]))});
+
+// ---------- surface texture (same patterns as the texture generator) ----------
+// Deterministic lattice hash; coordinates wrap at `period` so every layer tiles.
+function hash(x, y, seed) {
+  let h = (x * 374761393 + y * 668265263 + seed * 2147483647) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+}
+const wrap = (i, p) => ((i % p) + p) % p;
+const smooth = t => t * t * (3 - 2 * t);
+
+// Coordinates are in surface units: u runs once around the circumference (0..1) and v uses the
+// same unit length along the height, so every lattice cell is square on the cylinder wall.
+// Only u wraps; v is unbounded, which is what a cylinder wall needs.
+function valueNoise(x, y, period, seed) {
+  const x0 = Math.floor(x), y0 = Math.floor(y), fx = smooth(x - x0), fy = smooth(y - y0);
+  const a = hash(wrap(x0, period), y0, seed), b = hash(wrap(x0 + 1, period), y0, seed);
+  const c = hash(wrap(x0, period), y0 + 1, seed), d = hash(wrap(x0 + 1, period), y0 + 1, seed);
+  return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
+}
+
+function fbm(u, v, p, octaves, seed, ridged) {
+  let sum = 0, amp = 0.5, total = 0;
+  for (let o = 0; o < octaves; o++) {
+    const period = p << o;
+    let n = valueNoise(u * period, v * period, period, seed + o);
+    if (ridged) n = 1 - Math.abs(n * 2 - 1);
+    sum += n * amp; total += amp; amp /= 2;
+  }
+  return sum / total;
+}
+
+function cells(u, v, p, seed) {
+  const x = u * p, y = v * p, ix = Math.floor(x), iy = Math.floor(y);
+  let best = 9;
+  for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) {
+    const cx = ix + i, cy = iy + j, wx = wrap(cx, p);
+    const dx = cx + hash(wx, cy, seed) - x, dy = cy + hash(wx, cy, seed + 77) - y;
+    best = Math.min(best, dx * dx + dy * dy);
+  }
+  return Math.min(1, Math.sqrt(best));
+}
+
+// Concentric ripples radiating from one seeded point per lattice cell, like raindrops on water.
+// Neighbouring cells overlap so rings interfere; distances are in cell units and u wraps via cx.
+function ripples(u, v, p, rings, seed) {
+  const x = u * p, y = v * p, ix = Math.floor(x), iy = Math.floor(y);
+  let sum = 0;
+  for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) {
+    const cx = ix + i, cy = iy + j, wx = wrap(cx, p);
+    const dx = cx + hash(wx, cy, seed) - x, dy = cy + hash(wx, cy, seed + 77) - y, d = Math.hypot(dx, dy);
+    sum += Math.max(0, 1 - d / 1.5) ** 2 * Math.cos(d * rings * Math.PI * 2);
+  }
+  return Math.min(1, Math.max(0, 0.5 + sum * 0.6));
+}
+
+function patternHeight(kind, u, v, s) {
+  switch (kind) {
+    case 'ripples': return ripples(u, v, s.scale, s.detail, s.seed);
+    case 'ridged': return fbm(u, v, s.scale, s.detail, s.seed, true);
+    case 'cells': return cells(u, v, s.scale, s.seed);
+    case 'stripes': return (Math.sin((v + (fbm(u, v, s.scale, s.detail, s.seed) - 0.5) * 0.3) * s.scale * Math.PI * 2) + 1) / 2;
+    case 'grain': return valueNoise(u * s.scale * 32, v * s.scale * 32, s.scale * 32, s.seed);
+    default: return fbm(u, v, s.scale, s.detail, s.seed, false);
+  }
+}
+
+// Gray-Scott on a flat grid that wraps around (u) and is open along the profile (v), as in the texture generator.
+const rdCache = {key: '', nx: 0, ny: 0, V: null};
+const RD_PRESETS = {coral: [0.0545, 0.062], maze: [0.029, 0.057], spots: [0.035, 0.065], worms: [0.078, 0.061]};
+function rdField(nx, ny, preset, steps, seed) {
+  const key = [nx, ny, preset, steps, seed].join();
+  if (rdCache.key === key) return rdCache;
+  const [F, K] = RD_PRESETS[preset] || RD_PRESETS.coral, n = nx * ny;
+  let U = new Float32Array(n).fill(1), V = new Float32Array(n), U2 = new Float32Array(n), V2 = new Float32Array(n);
+  const rand = rng(seed), blobs = Math.max(8, Math.round(n / 450));
+  for (let b = 0; b < blobs; b++) {
+    const cx = Math.floor(rand() * nx), cy = Math.floor(rand() * ny), r = 2 + Math.floor(rand() * 4);
+    for (let y = -r; y <= r; y++) for (let x = -r; x <= r; x++) {
+      const yy = cy + y; if (x * x + y * y > r * r || yy < 0 || yy >= ny) continue;
+      const i = yy * nx + wrap(cx + x, nx); U[i] = 0.5; V[i] = 0.25 + rand() * 0.1;
+    }
+  }
+  for (let s = 0; s < steps; s++) {
+    for (let y = 0; y < ny; y++) {
+      const row = y * nx, up = (y ? y - 1 : 0) * nx, dn = (y + 1 < ny ? y + 1 : ny - 1) * nx;
+      for (let x = 0; x < nx; x++) {
+        const l = x ? x - 1 : nx - 1, r = x + 1 < nx ? x + 1 : 0, i = row + x, u = U[i], v = V[i], uvv = u * v * v;
+        U2[i] = u + 0.16 * (U[row + l] + U[row + r] + U[up + x] + U[dn + x] - 4 * u) - uvv + F * (1 - u);
+        V2[i] = v + 0.08 * (V[row + l] + V[row + r] + V[up + x] + V[dn + x] - 4 * v) + uvv - (F + K) * v;
+      }
+    }
+    [U, U2] = [U2, U]; [V, V2] = [V2, V];
+  }
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < n; i++) { if (V[i] < lo) lo = V[i]; if (V[i] > hi) hi = V[i]; }
+  const k = hi - lo > 1e-4 ? 1 / (hi - lo) : 0;
+  for (let i = 0; i < n; i++) V[i] = (V[i] - lo) * k;
+  Object.assign(rdCache, {key, nx, ny, V});
+  return rdCache;
+}
+function rdSample(f, u, v) {
+  const {nx, ny, V} = f, fx = u * nx - 0.5, fy = Math.min(ny - 1, Math.max(0, v * nx - 0.5)), x0 = Math.floor(fx), y0 = Math.floor(fy), tx = fx - x0, ty = fy - y0, y1 = Math.min(ny - 1, y0 + 1);
+  const c0 = wrap(x0, nx), c1 = wrap(x0 + 1, nx), top = V[y0 * nx + c0] + (V[y0 * nx + c1] - V[y0 * nx + c0]) * tx, bot = V[y1 * nx + c0] + (V[y1 * nx + c1] - V[y1 * nx + c0]) * tx;
+  return top + (bot - top) * ty;
+}
+function rng(seed) {
+  let a = (seed + 1) * 2654435761 >>> 0;
+  return () => { a = (a + 0x6D2B79F5) >>> 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+const smooth01 = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
 // ---------- profile curve ----------
 // Hermite spans between points. A smooth point takes a Catmull-Rom tangent; a corner has none, so two
@@ -48,7 +162,7 @@ function sample(points, detail) {
 // Closed (r, z) outline of the solid. Solid: the curve plus drops to the axis. Hollow: the curve and a copy
 // offset towards the axis, joined at both ends.
 function outline(path, wall) {
-  const clean = path.filter((p, i) => i === 0 || Math.hypot(p[0] - path[i - 1][0], p[1] - path[i - 1][1]) > 1e-6);
+  const clean = path.filter((p, i) => i === 0 || Math.hypot(p[0] - path[i - 1][0], p[1] - path[i - 1][1]) > 1e-6).map(p => [p[0], p[1], 1]);   // third entry 1 = on the drawn curve
   if (clean.length < 2) return [];
   if (wall <= 0) {
     const a = clean[0], b = clean[clean.length - 1];
@@ -64,6 +178,10 @@ function outline(path, wall) {
 }
 
 // ---------- mesh ----------
+// Every profile edge becomes a strip of rings around the axis. Edges on the drawn curve are cut into pieces about
+// one texture cell long and every ring point is pushed along the surface normal by depth * texture(u, v), where u
+// runs once around the axis and v is the distance along the curve, in the same units, so cells stay square at the
+// widest part. The pattern fades to nothing at sharp corners and where the surface faces up or down.
 function buildMesh(s) {
   const poly = outline(sample(pts, s.curve), s.wall).filter((p, i, a) => Math.hypot(p[0] - a[(i + 1) % a.length][0], p[1] - a[(i + 1) % a.length][1]) > 1e-6);
   if (poly.length < 3) return null;
@@ -78,15 +196,71 @@ function buildMesh(s) {
     const a = en[(i + m - 1) % m], b = en[i];
     return a[0] * b[0] + a[1] * b[1] > 0.62 ? norm2([a[0] + b[0], a[1] + b[1]]) : en[e];
   };
-  const P = [], N = [], N_ = s.around;
+  const maxR = Math.max(...poly.map(p => p[0])), C0 = 2 * Math.PI * Math.max(maxR, 1e-3), N_ = s.around, cell = C0 / N_;
+  const texOn = s.texKind !== 'none' && s.texDepth > 0, sign = s.texDir === 'in' ? -1 : 1;
+  // Edge table with arc length along the drawn curve.
+  const E = []; let arc = 0;
   for (let i = 0; i < m; i++) {
-    const a = poly[i], b = poly[(i + 1) % m];
-    if (a[0] < 1e-6 && b[0] < 1e-6) continue; // lies on the axis
-    const na = vn(i, i), nb = vn((i + 1) % m, i);
-    for (let j = 0; j < N_; j++) {
-      const t0 = j / N_ * Math.PI * 2, t1 = (j + 1) / N_ * Math.PI * 2, c0 = Math.cos(t0), s0 = Math.sin(t0), c1 = Math.cos(t1), s1 = Math.sin(t1);
-      const v = (p, n, c, sn) => [[p[0] * c, p[1], p[0] * sn], [n[0] * c, n[1], n[0] * sn]];
-      const A0 = v(a, na, c0, s0), A1 = v(a, na, c1, s1), B0 = v(b, nb, c0, s0), B1 = v(b, nb, c1, s1);
+    const a = poly[i], b = poly[(i + 1) % m], len = Math.hypot(b[0] - a[0], b[1] - a[1]), onAxis = a[0] < 1e-6 && b[0] < 1e-6;
+    E.push({a, b, len, arc0: arc, onAxis, tex: texOn && a[2] === 1 && b[2] === 1 && !onAxis, na: vn(i, i), nb: vn((i + 1) % m, i)});
+    if (a[2] === 1 && b[2] === 1) arc += len;
+  }
+  for (let i = 0; i < m; i++) {   // does the texture carry on smoothly across each end of the edge?
+    const p = E[(i + m - 1) % m], q = E[(i + 1) % m], n = en[i];
+    E[i].joinA = p.tex && E[i].tex && p.na !== undefined && en[(i + m - 1) % m][0] * n[0] + en[(i + m - 1) % m][1] * n[1] > 0.62;
+    E[i].joinB = q.tex && E[i].tex && en[(i + 1) % m][0] * n[0] + en[(i + 1) % m][1] * n[1] > 0.62;
+  }
+  // Pattern function: pattern -> contrast -> level / bevel, like the texture generator's height field.
+  let rdf = null;
+  if (texOn && s.texKind === 'reaction') { const nx = 192, ny = Math.max(64, Math.ceil(arc / C0 * nx / 64) * 64); rdf = rdField(nx, ny, s.texRd, s.texSteps, s.texSeed); }
+  const bw = Math.max(s.texBevel, 0.02), ps = {scale: s.texScale, detail: s.texDetail, seed: s.texSeed};
+  const hfun = (u, v) => {
+    let h = rdf ? rdSample(rdf, u, v) : patternHeight(s.texKind, u, v, ps);
+    h = Math.min(1, Math.max(0, (h - 0.5) * s.texContrast + 0.5));
+    if (s.texBevel < 1) { const q = Math.min(1, Math.max(0, (h - s.texLevel) / bw + 0.5)); h = q * q * (3 - 2 * q); }
+    return h;
+  };
+  const du = 1 / N_, dv = cell / C0, P = [], N = [];
+  const ringPos = [], ringNrm = [];   // per edge: array of rings, each Float32Array(3 * N_)
+  for (let i = 0; i < m; i++) {
+    const e = E[i];
+    if (e.onAxis) { ringPos.push(null); ringNrm.push(null); continue; }
+    const sub = e.tex ? Math.max(1, Math.ceil(e.len / cell)) : 1, te = [(e.b[0] - e.a[0]) / (e.len || 1), (e.b[1] - e.a[1]) / (e.len || 1)];
+    const rp = [], rn = [];
+    for (let k = 0; k <= sub; k++) {
+      const tt = k / sub, p0 = e.a[0] + (e.b[0] - e.a[0]) * tt, p1 = e.a[1] + (e.b[1] - e.a[1]) * tt;
+      const n = k === 0 ? e.na : k === sub ? e.nb : norm2([e.na[0] + (e.nb[0] - e.na[0]) * tt, e.na[1] + (e.nb[1] - e.na[1]) * tt]);
+      let w = 0;
+      if (e.tex) {
+        w = s.texFlat ? 1 : smooth01(0.2, 0.6, Math.abs(n[0]));
+        if (!e.joinA) w *= Math.min(1, tt * e.len / (2 * cell));
+        if (!e.joinB) w *= Math.min(1, (1 - tt) * e.len / (2 * cell));
+      }
+      const v = (e.arc0 + tt * e.len) / C0, pos = new Float32Array(N_ * 3), nm = new Float32Array(N_ * 3);
+      for (let j = 0; j < N_; j++) {
+        const th = j / N_ * Math.PI * 2, c = Math.cos(th), sn = Math.sin(th), u = j / N_;
+        let dd = 0, nx = n[0] * c, ny = n[1], nz = n[0] * sn;
+        if (w > 0) {
+          const amp = sign * s.texDepth * w;
+          dd = amp * hfun(u, v);
+          const gu = amp * (hfun(u + du, v) - hfun(u - du, v)) / (2 * du * 2 * Math.PI * Math.max(p0, 0.05)), gv = amp * (hfun(u, v + dv) - hfun(u, v - dv)) / (2 * dv * C0);
+          nx -= gu * -sn + gv * te[0] * c; ny -= gv * te[1]; nz -= gu * c + gv * te[0] * sn;
+          const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l;
+        }
+        const r = p0 + n[0] * dd;
+        pos[j * 3] = r * c; pos[j * 3 + 1] = p1 + n[1] * dd; pos[j * 3 + 2] = r * sn;
+        nm[j * 3] = nx; nm[j * 3 + 1] = ny; nm[j * 3 + 2] = nz;
+      }
+      rp.push(pos); rn.push(nm);
+    }
+    ringPos.push(rp); ringNrm.push(rn);
+  }
+  for (let i = 0; i < m; i++) {
+    if (!ringPos[i]) continue;
+    const rp = ringPos[i], rn = ringNrm[i];
+    for (let k = 0; k < rp.length - 1; k++) for (let j = 0; j < N_; j++) {
+      const j1 = (j + 1) % N_, v = (ring, jj, nrm) => [[ring[jj * 3], ring[jj * 3 + 1], ring[jj * 3 + 2]], [nrm[jj * 3], nrm[jj * 3 + 1], nrm[jj * 3 + 2]]];
+      const A0 = v(rp[k], j, rn[k]), A1 = v(rp[k], j1, rn[k]), B0 = v(rp[k + 1], j, rn[k + 1]), B1 = v(rp[k + 1], j1, rn[k + 1]);
       const tri = (x, y, z) => { if (area2(x[0], y[0], z[0]) > 1e-12) for (const q of [x, y, z]) { P.push(...q[0]); N.push(...q[1]); } };
       tri(A0, A1, B1); tri(A0, B1, B0);
     }
@@ -94,8 +268,7 @@ function buildMesh(s) {
   // Make winding agree with the outward normals (positive signed volume).
   let vol = 0;
   for (let i = 0; i < P.length; i += 9) {
-    const a = P.slice(i, i + 3), b = P.slice(i + 3, i + 6), c = P.slice(i + 6, i + 9);
-    vol += (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0])) / 6;
+    vol += (P[i] * (P[i + 4] * P[i + 8] - P[i + 5] * P[i + 7]) - P[i + 1] * (P[i + 3] * P[i + 8] - P[i + 5] * P[i + 6]) + P[i + 2] * (P[i + 3] * P[i + 7] - P[i + 4] * P[i + 6])) / 6;
   }
   if (vol < 0) for (let i = 0; i < P.length; i += 9) for (let k = 0; k < 3; k++) {
     for (const arr of [P, N]) { const t = arr[i + 3 + k]; arr[i + 3 + k] = arr[i + 6 + k]; arr[i + 6 + k] = t; }
@@ -103,8 +276,7 @@ function buildMesh(s) {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(P), 3));
   geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(N), 3));
-  const maxR = Math.max(...poly.map(p => p[0]));
-  return {geometry, triangles: P.length / 9, volume: Math.abs(vol), maxR, poly};
+  return {geometry, triangles: P.length / 9, volume: Math.abs(vol), maxR: maxR + (texOn && sign > 0 ? s.texDepth : 0), poly};
 }
 const norm2 = v => { const l = Math.hypot(v[0], v[1]) || 1; return [v[0] / l, v[1] / l]; };
 function area2(a, b, c) {
@@ -323,6 +495,9 @@ function applySection() {
 // ---------- wiring ----------
 function readouts() {
   const s = state();
+  const tex = s.texKind !== 'none';
+  $('texBox').hidden = !tex; $('texRdBox').hidden = s.texKind !== 'reaction' || !tex;
+  for (const id of ['texScale', 'texDetail', 'texDepth', 'texContrast', 'texLevel', 'texBevel', 'texSteps']) { const o = $(id).parentNode.querySelector(`label[for=${id}] output`); if (o) o.textContent = id === 'texDepth' ? (+$(id).value).toFixed(1) : ['texContrast', 'texLevel', 'texBevel'].includes(id) ? (+$(id).value).toFixed(2) : $(id).value; }
   $('aroundValue').textContent = s.around; $('curveValue').textContent = s.curve; $('wallValue').textContent = s.wall.toFixed(1);
   $('dims').textContent = `Profile area ${s.radius} × ${s.height} mm · solid up to Ø${(s.radius * 2).toFixed(1)} mm`;
 }
@@ -330,11 +505,11 @@ let frame = 0;
 function update() {
   const s = state();
   for (const p of pts) { p.x = Math.min(p.x, s.radius); p.y = Math.min(p.y, s.height); }
-  readouts(); drawEditor();
+  readouts(); drawEditor(); syncUrl();
   cancelAnimationFrame(frame);
   frame = requestAnimationFrame(rebuild);
 }
-for (const id of ['height', 'radius', 'around', 'curve', 'wall']) $(id).addEventListener('input', update);
+for (const id of ['height', 'radius', 'around', 'curve', 'wall', 'texKind', 'texDir', 'texRd', 'texFlat', ...TEX_NUMS]) $(id).addEventListener('input', update);
 $('wire').addEventListener('input', () => { const w = pivot.getObjectByName('wire'); if (w) w.visible = $('wire').checked; });
 $('section').addEventListener('input', applySection);
 $('resetView').addEventListener('click', () => { cam.yaw = 0; if (current) fit(cam.bound); });
@@ -348,6 +523,7 @@ $('preset').addEventListener('input', () => {
 });
 $('reset').addEventListener('click', () => {
   for (const id of ['height', 'radius', 'around', 'curve', 'wall']) $(id).value = DEFAULTS[id];
+  setTexDefaults();
   $('preset').value = DEFAULTS.preset; pts = presetPts(DEFAULTS.preset); sel = -1; undoStack = []; refitted = false; update();
 });
 $('exportStl').addEventListener('click', () => {
@@ -359,8 +535,17 @@ $('exportStl').addEventListener('click', () => {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 });
 
+function setTexDefaults() { for (const [k, v] of Object.entries(TEX_DEFAULTS)) { if (typeof v === 'boolean') $(k).checked = v; else $(k).value = v; } }
 // Share link: every control and the whole profile live in the URL hash.
 const round = v => Math.round(v * 100) / 100;
+const urlData = () => ({...state(), pts: pts.map(p => [round(p.x), round(p.y), p.s ? 1 : 0])});
+// Keep every parameter in the address bar so the page can be shared as it is (debounced).
+let urlTimer = 0;
+function syncUrl() {
+  clearTimeout(urlTimer);
+  urlTimer = setTimeout(() => { try { history.replaceState(null, '', location.pathname + location.search + '#' + encodeURIComponent(JSON.stringify(urlData()))); } catch { /* ignore */ } }, 300);
+}
+
 $('share').addEventListener('click', async () => {
   const s = state(), data = {...s, pts: pts.map(p => [round(p.x), round(p.y), p.s ? 1 : 0])};
   const url = location.href.split('#')[0] + '#' + encodeURIComponent(JSON.stringify(data));
@@ -372,10 +557,13 @@ $('share').addEventListener('click', async () => {
 function applyHash() {
   try {
     const d = JSON.parse(decodeURIComponent(location.hash.slice(1)));
-    for (const id of ['height', 'radius', 'around', 'curve', 'wall']) if (typeof d[id] === 'number') $(id).value = d[id];
+    for (const id of ['height', 'radius', 'around', 'curve', 'wall', ...TEX_NUMS]) if (typeof d[id] === 'number') $(id).value = d[id];
+    for (const id of ['texKind', 'texDir', 'texRd']) if (typeof d[id] === 'string') $(id).value = d[id];
+    if (typeof d.texFlat === 'boolean') $('texFlat').checked = d.texFlat;
     if (Array.isArray(d.pts) && d.pts.length >= 2) pts = d.pts.map(([x, y, s]) => ({x: +x || 0, y: +y || 0, s: !!s}));
   } catch { /* no or invalid hash: keep defaults */ }
 }
 $('preset').value = DEFAULTS.preset;
+setTexDefaults();
 applyHash();
 update();

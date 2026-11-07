@@ -295,7 +295,14 @@ function stlBlob() {
 
 // ---------- wiring ----------
 function restart() { const s = readState(); simReset(s.res, s.seed, s.seeds); snaps.length = 0; paused = false; dirty = true; }
-const live = () => { readouts(readState()); dirty = true; };
+// Keep every parameter in the address bar so the page can be shared as it is (debounced).
+let urlTimer = 0;
+function syncUrl() {
+  clearTimeout(urlTimer);
+  urlTimer = setTimeout(() => { try { history.replaceState(null, '', location.pathname + location.search + '#' + encodeURIComponent(JSON.stringify(urlData()))); } catch { /* ignore */ } }, 300);
+}
+const urlData = () => readState();
+const live = () => { readouts(readState()); dirty = true; syncUrl(); };
 // These change the growth itself, so the stack is grown again from the core.
 for (const id of ['branching', 'pattern', 'seeds', 'warm', 'interval', 'res', 'seed']) $(id).addEventListener('input', () => { restart(); live(); });
 for (const id of ['part', 'dir', 'height', 'level', 'taper', 'diameter', 'layers']) $(id).addEventListener('input', live);
