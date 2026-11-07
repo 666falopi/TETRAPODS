@@ -1,0 +1,26 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Reaction Branches</title><meta name="description" content="Reaction-diffusion grown on a sphere, with the white or black regions extruded into 3D and exported as STL."><link rel="stylesheet" href="style.css"></head><body>
+<header><a href="../" aria-label="Back to dashboard">R / B</a><span>FORM STUDIES <b>—</b> REACTION BRANCHES</span><span class="status">● LIVE GENERATOR</span></header>
+<main><section class="parameters"><div class="eyebrow">GRAY–SCOTT / SPHERE</div><h1>Branches<span>on a sphere.</span></h1><p class="intro">A reaction–diffusion pattern runs directly on the sphere's surface. Then the white or the black parts are pushed out as rounded, tapering strands instead of straight walls.</p>
+<div class="control"><label>01 / PATTERN</label>
+<label for="branching">Branching <output></output></label><input id="branching" type="range" min="0" max="1" step="0.01"><p class="hint"><span id="fk"></span><br>0 isolated spots → 0.5 branching coral → 1 dense maze. Changing it while the pattern runs lets it morph.</p>
+<label for="res">Resolution (smaller features when finer)</label><select id="res"><option value="4">Coarse · 2,562 points</option><option value="5">Medium · 10,242 points</option><option value="6">Fine · 40,962 points</option></select>
+<label for="seed">Seed</label><div class="row"><input id="seed" type="number" min="0" max="999999" step="1"><button id="dice">RANDOMISE ⚄</button></div>
+<div class="row tools"><button id="run" class="primary">PAUSE ❚❚</button><button id="restart">RESTART ↺</button></div><p class="hint" id="steps"></p></div>
+<div class="control"><label>02 / EXTRUDE</label>
+<label for="part">Extrude the</label><select id="part"><option value="white">White parts</option><option value="black">Black parts</option><option value="none">Nothing (texture only)</option></select>
+<label for="dir">Direction</label><select id="dir"><option value="out">Raised (out of the sphere)</option><option value="in">Engraved (into the sphere)</option></select>
+<label for="height">Extrusion height · mm <output></output></label><input id="height" type="range" min="0" max="20" step="0.1">
+<label for="level">Threshold <output></output></label><input id="level" type="range" min="0.05" max="0.95" step="0.01">
+<label for="round">Round cross-section (0 wall · 1 branch) <output></output></label><input id="round" type="range" min="0" max="1" step="0.01"><label for="thick">Branch thickness · mesh edges <output></output></label><input id="thick" type="range" min="1" max="8" step="0.1"><label for="vary">Height variation <output></output></label><input id="vary" type="range" min="0" max="1" step="0.01"><label for="smooth">Smoothing passes</label><input id="smooth" type="range" min="0" max="8" step="1"></div>
+<div class="control"><label>03 / VORONOI INTERIOR</label>
+<label class="check"><input id="lattice" type="checkbox"> Open Voronoi structure below the crests</label>
+<label for="cell">Cell size · mm <output></output></label><input id="cell" type="range" min="4" max="20" step="0.5">
+<label for="wall">Strut thickness · mm <output></output></label><input id="wall" type="range" min="1.5" max="8" step="0.1">
+<label for="depth">Lattice depth under the sphere surface · mm <output></output></label><input id="depth" type="range" min="2" max="30" step="0.5">
+<label for="crest">Solid crest on top of the branches · mm <output></output></label><input id="crest" type="range" min="0" max="6" step="0.1">
+<label for="soften">Smooth the lattice (passes) <output></output></label><input id="soften" type="range" min="0" max="5" step="1">
+<label for="stopAt">Stop the pattern at step <output></output></label><input id="stopAt" type="range" min="500" max="10000" step="100"><p class="hint">While the pattern runs you see the fast surface preview. When it stops (or you pause it) the open Voronoi solid is built, which takes a second or two. Changing a lattice or shape control rebuilds it.</p></div>
+<div class="control"><label>03 / SIZE</label><label for="diameter">Sphere diameter · mm</label><input id="diameter" type="number" min="10" max="500" step="1"><p class="hint" id="dims"></p></div>
+<div class="control"><button id="exportStl" class="primary">EXPORT STL ↓</button><button id="share">COPY SHARE LINK ⧉</button><button id="reset">RESET ↺</button></div></section>
+<section class="capture"><div class="model-head"><span>LIVE SPHERE</span><span id="info"></span></div><div class="viewbar"><label class="check"><input id="wire" type="checkbox"> Wireframe</label><label class="check"><input id="auto" type="checkbox" checked> Auto-rotate</label><button id="resetView">RESET VIEW</button></div><p class="hint" id="warn"></p><div class="stage" id="stage"></div></section></main>
+<footer>THE SPHERE IS GENERATED IN THE BROWSER / NOTHING IS UPLOADED</footer><script type="module" src="app.js"></script><script>setTimeout(function(){if(!window.__rdLoaded){document.getElementById("warn").textContent=location.protocol==="file:"?"The script could not load from file://. Serve the repo over http (python3 -m http.server in the repo root) and open http://localhost:8000/rd-branches/":"The script failed to load. Open the browser console for the error."}},2500)</script></body></html>
