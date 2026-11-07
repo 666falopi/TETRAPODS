@@ -1,8 +1,8 @@
 import * as THREE from './three.module.js';
 const $ = id => document.getElementById(id);
-const DEFAULTS = {branching: 0.5, res: 6, seed: 7, part: 'white', dir: 'out', height: 4, level: 0.5, soft: 0.3, diameter: 60};
-const NUMS = ['branching', 'seed', 'height', 'level', 'soft', 'diameter'];
-const MAX_STEPS = 30000;
+const DEFAULTS = {branching: 0.5, pattern: 'spots', res: 5, seed: 7, seeds: 20, warm: 1500, layers: 24, interval: 40, taper: 0.2, part: 'white', dir: 'out', height: 18, level: 0.5, diameter: 50};
+const NUMS = ['branching', 'seed', 'seeds', 'warm', 'layers', 'interval', 'taper', 'height', 'level', 'diameter'];
+const PATTERNS = {spots: [0.035, 0.065], coral: [0.0545, 0.062], maze: [0.029, 0.057], worms: [0.078, 0.061]};
 
 // ---------- sphere mesh ----------
 // Icosphere: a subdivided icosahedron has near-uniform triangles all over the sphere, so the pattern is
@@ -44,14 +44,14 @@ function rng(seed) {
   return () => { a = (a + 0x6D2B79F5) >>> 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
 const meshCache = {};
-function simReset(level, seed) {
+function simReset(level, seed, blobs) {
   const m = meshCache[level] ||= icosphere(level), n = m.n;
   Object.assign(sim, {mesh: m, U: new Float32Array(n).fill(1), V: new Float32Array(n), U2: new Float32Array(n), V2: new Float32Array(n), steps: 0});
-  const rand = rng(seed), blobs = Math.max(4, Math.round(n / 500));
+  const rand = rng(seed), depth = level >= 5 ? 3 : 2;
   for (let b = 0; b < blobs; b++) {
-    // A blob is a few rings of neighbours around a random point.
+    // A seed is a few rings of neighbours around a random point.
     let frontier = [Math.floor(rand() * n)];
-    const depth = 1 + Math.floor(rand() * 3), seen = new Set(frontier);
+    const seen = new Set(frontier);
     for (let d = 0; d <= depth; d++) {
       const nextF = [];
       for (const i of frontier) {
@@ -62,8 +62,8 @@ function simReset(level, seed) {
     }
   }
 }
-function simStep(count, F, K) {
-  const {n, start, nb} = sim.mesh, Du = 0.16 / 1.5, Dv = 0.08 / 1.5;
+function simStep(count, F, K, ds = 1) {
+  const {n, start, nb} = sim.mesh, Du = 0.16 / 1.5 * ds, Dv = 0.08 / 1.5 * ds;
   for (let s = 0; s < count; s++) {
     const {U, V, U2, V2} = sim;
     for (let i = 0; i < n; i++) {
@@ -78,26 +78,23 @@ function simStep(count, F, K) {
   }
   sim.steps += count;
 }
-// Branching slider walks the (feed, kill) plane: isolated spots -> branching coral -> dense maze.
-const FK = [[0.035, 0.065], [0.0545, 0.062], [0.029, 0.057]];
-function feedKill(b) {
-  const x = Math.min(1, Math.max(0, b)) * 2, i = x < 1 ? 0 : 1, t = x - i;
-  return [FK[i][0] + (FK[i + 1][0] - FK[i][0]) * t, FK[i][1] + (FK[i + 1][1] - FK[i][1]) * t];
-}
+// Branching = how fast the pattern's feature size shrinks as the shells move outward. A sphere's area grows
+// with radius squared, so shrinking the diffusion rates by (R0/r)^(2*gamma) makes columns divide to fill it.
+// gamma = 1 keeps the feature size constant in millimetres (the natural coral case); 0 is plain extrusion.
+const gammaOf = b => 2 * b;
+const diffusionScale = (b, R0, r) => Math.pow(R0 / r, 2 * gammaOf(b));
 
 // ---------- state ----------
 function readState() {
-  const s = {res: +$('res').value, part: $('part').value, dir: $('dir').value};
+  const s = {res: +$('res').value, pattern: $('pattern').value, part: $('part').value, dir: $('dir').value};
   for (const id of NUMS) s[id] = +$(id).value;
   s.seed = Math.floor(s.seed) || 0; s.diameter = Math.min(500, Math.max(10, s.diameter || 10));
   return s;
 }
 function readouts(s) {
-  for (const id of ['branching', 'height', 'level', 'soft']) { const o = $(id).parentNode.querySelector(`label[for=${id}] output`); if (o) o.textContent = (+$(id).value).toFixed(2); }
-  const [F, K] = feedKill(s.branching);
-  $('fk').textContent = `feed ${F.toFixed(4)} · kill ${K.toFixed(4)}`;
+  for (const id of ['branching', 'height', 'level', 'taper']) { const o = $(id).parentNode.querySelector(`label[for=${id}] output`); if (o) o.textContent = (+$(id).value).toFixed(2); }
+  $('fk').textContent = s.branching === 0 ? 'Feature size stays the same: plain extrusion.' : `Feature size shrinks to ${(100 * Math.pow(1 / (1 + s.height / (s.diameter / 2)), gammaOf(s.branching))).toFixed(0)}% by the outer shell, so columns divide about ${Math.pow(1 + s.height / (s.diameter / 2), 2 * gammaOf(s.branching)).toFixed(1)}× over.`;
 }
-const smoothstep = t => { t = Math.min(1, Math.max(0, t)); return t * t * (3 - 2 * t); };
 
 // ---------- viewer ----------
 const stage = $('stage');
@@ -107,7 +104,7 @@ catch { stage.innerHTML = '<p class="nogl">WebGL is not available in this browse
 const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(35, 1, 0.1, 8000), tilt = new THREE.Group(), pivot = new THREE.Group();
 const cam = {yaw: 0.6, pitch: 0.25, dist: 200, bound: 30, dragging: false};
 const material = new THREE.MeshStandardMaterial({vertexColors: true, roughness: 0.55, metalness: 0.05});
-let geometry = null, mesh = null, geoLevel = -1;
+let mesh = null;
 const place = () => { camera.position.set(0, 0, cam.dist); camera.lookAt(0, 0, 0); };
 const fitView = bound => { cam.bound = bound; cam.dist = bound * 4.6; cam.pitch = 0.25; place(); };
 if (renderer) {
@@ -134,69 +131,161 @@ if (renderer) {
   });
 }
 
-// ---------- surface from the simulation ----------
-const dark = [0.11, 0.115, 0.105], light = [0.85, 0.875, 0.82];
-let positions = null, volumeMm3 = 0, dirty = true, running = true, stepTarget = 0;
-function surface() {
-  const s = readState(), {mesh: m, V} = sim, {n, dir, index} = m;
-  if (geoLevel !== s.res || !geometry) {
-    if (geometry) geometry.dispose();
-    geometry = new THREE.BufferGeometry();
-    positions = new Float32Array(n * 3);
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(n * 3), 3));
-    geometry.setIndex(new THREE.BufferAttribute(index, 1));
-    geoLevel = s.res;
-    if (mesh) pivot.remove(mesh);
-    mesh = new THREE.Mesh(geometry, material); pivot.add(mesh);
-  }
+// ---------- growth stack -> solid ----------
+// Each layer outward from the core is a later snapshot of the pattern on the sphere, so time becomes radius:
+// a spot that divides while the simulation runs becomes a column that forks on its way out. Layer 0 is the
+// solid core, the last layer is empty. Between layers the values are joined by marching tetrahedra on the
+// triangular prisms of the icosphere, which gives a smooth surface that may fork, overhang and fuse.
+const snaps = [];
+function snapshot() {
+  const {V} = sim, n = V.length, out = new Uint8Array(n);
   let lo = Infinity, hi = -Infinity;
   for (let i = 0; i < n; i++) { if (V[i] < lo) lo = V[i]; if (V[i] > hi) hi = V[i]; }
-  const k = hi - lo > 1e-4 ? 1 / (hi - lo) : 0, R = s.diameter / 2, col = geometry.attributes.color.array, bw = Math.max(s.soft, 0.02) * 0.5;
-  const sign = s.dir === 'out' ? 1 : -1;
-  for (let i = 0; i < n; i++) {
-    const t = (V[i] - lo) * k, white = smoothstep((t - s.level) / bw * 0.5 + 0.5);
-    const p = s.part === 'white' ? white : s.part === 'black' ? 1 - white : 0, r = R + sign * s.height * p;
-    positions[i * 3] = dir[i * 3] * r; positions[i * 3 + 1] = dir[i * 3 + 1] * r; positions[i * 3 + 2] = dir[i * 3 + 2] * r;
-    for (let c = 0; c < 3; c++) col[i * 3 + c] = dark[c] + (light[c] - dark[c]) * white;
+  const k = hi - lo > 1e-4 ? 255 / (hi - lo) : 0;
+  for (let i = 0; i < n; i++) out[i] = (V[i] - lo) * k;
+  snaps.push(out);
+}
+function extract(s) {
+  const {n, dir, index} = sim.mesh, L = Math.min(s.layers, snaps.length), iso = s.level * 255;
+  const layers = [], R0 = s.diameter / 2, dr = s.height / (L + 1), radii = [];
+  // Pattern value of shell k (white or black part), thinned a little more per shell so the tips get slender.
+  const part = (a, k) => {
+    const out = new Float32Array(n), off = 255 * s.taper * (k + 1) / L;
+    for (let i = 0; i < n; i++) out[i] = (s.part === 'black' ? 255 - a[i] : a[i]) - off;
+    return out;
+  };
+  const full = new Float32Array(n).fill(255), empty = new Float32Array(n);
+  if (s.dir === 'out') {
+    layers.push(full); for (let k = 0; k < L; k++) layers.push(part(snaps[k], k)); layers.push(empty);
+    for (let k = 0; k <= L + 1; k++) radii.push(R0 + k * dr);
+  } else {
+    // Carving inwards: pattern at the surface, the core below. Solid = what is not pattern.
+    layers.push(full); for (let k = L - 1; k >= 0; k--) layers.push(part(snaps[k], k).map(v => 255 - v)); layers.push(empty);
+    for (let k = 0; k <= L + 1; k++) radii.push(R0 - (L + 1 - k) * dr);
   }
-  geometry.attributes.position.needsUpdate = true; geometry.attributes.color.needsUpdate = true;
-  geometry.computeVertexNormals();
+  const nl = layers.length, M = n * nl, pos = [], idx = [], cache = new Map();
+  const P = (g, c) => { const k = (g / n) | 0, i = g - k * n; return dir[i * 3 + c] * radii[k]; };
+  const cross = (g1, v1, g2, v2) => {
+    const key = g1 < g2 ? g1 * M + g2 : g2 * M + g1;
+    let id = cache.get(key);
+    if (id === undefined) {
+      const t = (iso - v1) / (v2 - v1);
+      for (let c = 0; c < 3; c++) pos.push(P(g1, c) + (P(g2, c) - P(g1, c)) * t);
+      id = pos.length / 3 - 1; cache.set(key, id);
+    }
+    return id;
+  };
+  const tri = (a, b, c, inG) => {
+    // Orient so that the normal points away from the inside (value >= iso).
+    const A = a * 3, B = b * 3, C = c * 3;
+    const ux = pos[B] - pos[A], uy = pos[B + 1] - pos[A + 1], uz = pos[B + 2] - pos[A + 2], vx = pos[C] - pos[A], vy = pos[C + 1] - pos[A + 1], vz = pos[C + 2] - pos[A + 2];
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    let cx = 0, cy = 0, cz = 0;
+    for (const g of inG) { cx += P(g, 0); cy += P(g, 1); cz += P(g, 2); }
+    cx /= inG.length; cy /= inG.length; cz /= inG.length;
+    const mx = (pos[A] + pos[B] + pos[C]) / 3, my = (pos[A + 1] + pos[B + 1] + pos[C + 1]) / 3, mz = (pos[A + 2] + pos[B + 2] + pos[C + 2]) / 3;
+    if (nx * (cx - mx) + ny * (cy - my) + nz * (cz - mz) > 0) idx.push(a, c, b); else idx.push(a, b, c);
+  };
+  const tet = (g0, g1, g2, g3, v0, v1, v2, v3) => {
+    const g = [g0, g1, g2, g3], v = [v0, v1, v2, v3], ins = [], out = [];
+    for (let q = 0; q < 4; q++) (v[q] >= iso ? ins : out).push(q);
+    if (!ins.length || !out.length) return;
+    const inG = ins.map(q => g[q]);
+    if (ins.length === 1 || out.length === 1) {
+      const lone = ins.length === 1 ? ins[0] : out[0], rest = [0, 1, 2, 3].filter(q => q !== lone);
+      const e = rest.map(q => cross(g[lone], v[lone], g[q], v[q]));
+      tri(e[0], e[1], e[2], inG);
+    } else {
+      const [a, b] = ins, [c, d] = out;
+      const ac = cross(g[a], v[a], g[c], v[c]), ad = cross(g[a], v[a], g[d], v[d]), bd = cross(g[b], v[b], g[d], v[d]), bc = cross(g[b], v[b], g[c], v[c]);
+      tri(ac, ad, bd, inG); tri(ac, bd, bc, inG);
+    }
+  };
+  for (let f = 0; f < index.length; f += 3) {
+    const t3 = [index[f], index[f + 1], index[f + 2]].sort((x, y) => x - y), p = t3[0], q = t3[1], r = t3[2];
+    for (let k = 0; k < nl - 1; k++) {
+      const a = layers[k], b = layers[k + 1];
+      const p0 = a[p], q0 = a[q], r0 = a[r], p1 = b[p], q1 = b[q], r1 = b[r];
+      const mn = Math.min(p0, q0, r0, p1, q1, r1), mx = Math.max(p0, q0, r0, p1, q1, r1);
+      if (mx < iso || mn >= iso) continue;
+      const o = k * n, o1 = (k + 1) * n;
+      tet(o + p, o + q, o + r, o1 + r, p0, q0, r0, r1);
+      tet(o + p, o + q, o1 + q, o1 + r, p0, q0, q1, r1);
+      tet(o + p, o1 + p, o1 + q, o1 + r, p0, p1, q1, r1);
+    }
+  }
+  return {pos: new Float32Array(pos), idx: new Uint32Array(idx), R0, top: radii[radii.length - 1], bottom: radii[0]};
+}
+
+const dark = [0.2, 0.17, 0.15], light = [0.93, 0.9, 0.82];
+let solid = null, volumeMm3 = 0, dirty = true, paused = false, lastBuild = 0;
+function surface() {
+  const s = readState();
+  solid = extract(s);
+  const {pos, idx} = solid, nv = pos.length / 3, col = new Float32Array(nv * 3);
+  let rmin = Infinity, rmax = -Infinity, r = new Float32Array(nv);
+  for (let i = 0; i < nv; i++) { r[i] = Math.hypot(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]); rmin = Math.min(rmin, r[i]); rmax = Math.max(rmax, r[i]); }
+  for (let i = 0; i < nv; i++) {
+    const h = rmax > rmin ? (r[i] - rmin) / (rmax - rmin) : 0, t = s.dir === 'out' ? h : 1 - h;
+    for (let c = 0; c < 3; c++) col[i * 3 + c] = dark[c] + (light[c] - dark[c]) * (0.15 + 0.85 * t);
+  }
   let vol = 0;
-  for (let q = 0; q < index.length; q += 3) {
-    const a = index[q] * 3, b = index[q + 1] * 3, c = index[q + 2] * 3, P = positions;
-    vol += P[a] * (P[b + 1] * P[c + 2] - P[b + 2] * P[c + 1]) - P[a + 1] * (P[b] * P[c + 2] - P[b + 2] * P[c]) + P[a + 2] * (P[b] * P[c + 1] - P[b + 1] * P[c]);
+  for (let q = 0; q < idx.length; q += 3) {
+    const a = idx[q] * 3, b = idx[q + 1] * 3, c = idx[q + 2] * 3;
+    vol += pos[a] * (pos[b + 1] * pos[c + 2] - pos[b + 2] * pos[c + 1]) - pos[a + 1] * (pos[b] * pos[c + 2] - pos[b + 2] * pos[c]) + pos[a + 2] * (pos[b] * pos[c + 1] - pos[b + 1] * pos[c]);
   }
   volumeMm3 = vol / 6;
-  const out = R + (s.dir === 'out' && s.part !== 'none' ? s.height : 0);
-  if (Math.abs(out - cam.bound) > cam.bound * 0.25) fitView(out);
-  $('info').textContent = `Ø${(2 * out).toFixed(0)} MM · ${(volumeMm3 / 1000).toFixed(1)} CM³ · ${(index.length / 3).toLocaleString('en')} TRIANGLES`;
-  $('dims').textContent = `Base sphere Ø${s.diameter} mm · relief ${s.dir === 'out' ? 'up to' : 'down to'} ${s.height} mm`;
-  material.wireframe = $('wire').checked;
+  if (renderer) {
+    if (mesh) { pivot.remove(mesh); mesh.geometry.dispose(); }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    g.setIndex(new THREE.BufferAttribute(idx, 1)); g.computeVertexNormals();
+    mesh = new THREE.Mesh(g, material); pivot.add(mesh);
+    material.wireframe = $('wire').checked;
+  }
+  const out = Math.max(solid.top, solid.R0);
+  if (Math.abs(out - cam.bound) > cam.bound * 0.15) fitView(out);
+  $('info').textContent = `Ø${(2 * out).toFixed(0)} MM · ${(volumeMm3 / 1000).toFixed(1)} CM³ · ${(idx.length / 3).toLocaleString('en')} TRIANGLES`;
+  $('dims').textContent = `Core Ø${s.diameter} mm · growth ${s.dir === 'out' ? 'outwards' : 'inwards'} ${s.height} mm over ${Math.min(s.layers, snaps.length)} layers`;
 }
 function tick() {
-  const s = readState();
   if (!sim.mesh) return;
-  let changed = dirty;
-  if (running || sim.steps < stepTarget) {
-    const [F, K] = feedKill(s.branching), t0 = performance.now(), limit = Math.max(stepTarget, running ? MAX_STEPS : 0);
-    while (sim.steps < limit && performance.now() - t0 < 12) simStep(2, F, K);
-    if (sim.steps >= MAX_STEPS) running = false;
-    changed = true;
+  const s = readState(), [F, K] = PATTERNS[s.pattern] || PATTERNS.maze;
+  let changed = false, phase = '';
+  if (!paused && snaps.length < s.layers) {
+    const t0 = performance.now();
+    if (sim.steps < s.warm && snaps.length === 0) {
+      // Core: grow the plain pattern first so shell 1 starts from a developed texture.
+      while (sim.steps < s.warm && performance.now() - t0 < 12) simStep(Math.min(5, s.warm - sim.steps), F, K);
+      phase = `Growing the core pattern · step ${sim.steps} of ${s.warm}`;
+      if (sim.steps >= s.warm) { snapshot(); changed = true; }
+    } else {
+      // One shell per frame: grow `interval` steps at this radius' diffusion, then record it.
+      const r = s.diameter / 2 + s.height * snaps.length / Math.max(1, s.layers - 1);
+      if (snaps.length === 0) snapshot(); else simStep(s.interval, F, K, diffusionScale(s.branching, s.diameter / 2, r)), snapshot();
+      changed = true;
+    }
   }
-  if (changed) { dirty = false; surface(); const st = $('steps'); st.textContent = `Step ${sim.steps.toLocaleString('en')}${running ? '' : ' · paused'}`; $('run').textContent = running ? 'PAUSE ❚❚' : 'RUN ▶'; }
+  if (dirty || changed) {
+    const now = performance.now();
+    if (now - lastBuild > 250 || (!changed && dirty)) { lastBuild = now; dirty = false; if (snaps.length) surface(); }
+    else dirty = true;
+  }
+  const grown = snaps.length >= s.layers;
+  $('steps').textContent = phase || `Shell ${Math.min(snaps.length, s.layers)} of ${s.layers} · step ${sim.steps.toLocaleString('en')}${grown ? ' · fully grown' : paused ? ' · paused' : ''}`;
+  $('run').textContent = grown ? 'GROWN ✓' : paused ? 'GROW ▶' : 'PAUSE ❚❚';
 }
 
 // ---------- STL ----------
 function stlBlob() {
-  const index = sim.mesh.index, count = index.length / 3, buffer = new ArrayBuffer(84 + count * 50), view = new DataView(buffer);
+  const {pos, idx} = solid, count = idx.length / 3, buffer = new ArrayBuffer(84 + count * 50), view = new DataView(buffer);
   view.setUint32(80, count, true);
   let zmin = Infinity;
-  for (let i = 0; i < positions.length; i += 3) zmin = Math.min(zmin, positions[i + 1]);
+  for (let i = 0; i < pos.length; i += 3) zmin = Math.min(zmin, pos[i + 1]);
   // three.js is y-up, STL is z-up: (x, y, z) -> (x, -z, y), resting on z = 0.
-  const P = i => [positions[i * 3], -positions[i * 3 + 2], positions[i * 3 + 1] - zmin];
+  const P = i => [pos[i * 3], -pos[i * 3 + 2], pos[i * 3 + 1] - zmin];
   for (let t = 0; t < count; t++) {
-    const a = P(index[t * 3]), b = P(index[t * 3 + 1]), c = P(index[t * 3 + 2]);
+    const a = P(idx[t * 3]), b = P(idx[t * 3 + 1]), c = P(idx[t * 3 + 2]);
     const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], w = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
     const n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]], l = Math.hypot(...n) || 1;
     [n[0] / l, n[1] / l, n[2] / l, ...a, ...b, ...c].forEach((x, q) => view.setFloat32(84 + t * 50 + q * 4, x, true));
@@ -205,28 +294,29 @@ function stlBlob() {
 }
 
 // ---------- wiring ----------
-function restart() { const s = readState(); simReset(s.res, s.seed); running = true; stepTarget = 0; dirty = true; }
+function restart() { const s = readState(); simReset(s.res, s.seed, s.seeds); snaps.length = 0; paused = false; dirty = true; }
 const live = () => { readouts(readState()); dirty = true; };
-for (const id of ['branching', 'part', 'dir', 'height', 'level', 'soft', 'diameter']) $(id).addEventListener('input', live);
-for (const id of ['res', 'seed']) $(id).addEventListener('input', () => { live(); restart(); });
+// These change the growth itself, so the stack is grown again from the core.
+for (const id of ['branching', 'pattern', 'seeds', 'warm', 'interval', 'res', 'seed']) $(id).addEventListener('input', () => { restart(); live(); });
+for (const id of ['part', 'dir', 'height', 'level', 'taper', 'diameter', 'layers']) $(id).addEventListener('input', live);
 $('dice').addEventListener('click', () => { $('seed').value = Math.floor(Math.random() * 100000); restart(); live(); });
-$('restart').addEventListener('click', restart);
-$('run').addEventListener('click', () => { running = !running && sim.steps < MAX_STEPS; dirty = true; });
+$('restart').addEventListener('click', () => { restart(); live(); });
+$('run').addEventListener('click', () => { paused = !paused; dirty = true; });
 $('wire').addEventListener('input', () => { material.wireframe = $('wire').checked; });
 $('resetView').addEventListener('click', () => { cam.yaw = 0.6; fitView(cam.bound); });
 function setDefaults() { for (const [k, v] of Object.entries(DEFAULTS)) $(k).value = v; }
 $('reset').addEventListener('click', () => { setDefaults(); restart(); live(); });
 $('exportStl').addEventListener('click', () => {
-  if (!positions) return;
+  if (!solid) return;
   const a = document.createElement('a'), s = readState();
   a.href = URL.createObjectURL(stlBlob());
-  a.download = `reaction-sphere-${s.part}-seed${s.seed}-${s.diameter}mm.stl`;
+  a.download = `reaction-coral-${s.part}-seed${s.seed}-${s.diameter}mm.stl`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 });
-// Share link: every control plus the step reached. Opening it replays the simulation to that step.
+// Share link: every control. Opening it grows the same stack again from the same seed.
 $('share').addEventListener('click', async () => {
-  const url = location.href.split('#')[0] + '#' + encodeURIComponent(JSON.stringify({...readState(), steps: sim.steps}));
+  const url = location.href.split('#')[0] + '#' + encodeURIComponent(JSON.stringify(readState()));
   history.replaceState(null, '', url);
   try { await navigator.clipboard.writeText(url); $('share').textContent = 'LINK COPIED ✓'; }
   catch { $('share').textContent = 'LINK IN ADDRESS BAR'; }
@@ -236,16 +326,12 @@ function applyHash() {
   try {
     const d = JSON.parse(decodeURIComponent(location.hash.slice(1)));
     for (const id of [...NUMS, 'res']) if (typeof d[id] === 'number') $(id).value = d[id];
-    for (const id of ['part', 'dir']) if (typeof d[id] === 'string') $(id).value = d[id];
-    if (typeof d.steps === 'number') stepTarget = Math.min(MAX_STEPS, Math.max(0, d.steps | 0));
+    for (const id of ['part', 'dir', 'pattern']) if (typeof d[id] === 'string') $(id).value = d[id];
   } catch { /* no hash */ }
 }
 window.__rdLoaded = true;
 fitView(cam.bound);
 setDefaults();
 applyHash();
-const wanted = stepTarget;
-restart(); stepTarget = wanted;
-if (wanted) running = false;
+restart();
 live();
-window.__rd = {sim, simStep, feedKill, simReset, readState};
