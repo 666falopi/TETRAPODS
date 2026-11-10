@@ -119,10 +119,10 @@ function reactionField(w, h) {
 // The pattern formulas and Gray–Scott solver above come from Texture Generator.
 let previousKey='';
 export function makePattern(settings, progress=()=>{}){
- const s={...settings}, w=512, h=Math.max(8,Math.round(w*s.height/(Math.PI*s.diameter)));
+ const s={...settings}, w=s.kind==='reaction'?Math.ceil(512/(s.wrapRepeats||1))*(s.wrapRepeats||1):512, h=Math.max(8,Math.round(w*s.height/(Math.PI*s.diameter)));
  let data;
  if(s.kind==='reaction'){
-  const repeats=Math.max(1,Math.round(Math.PI*s.diameter/(s.textureSize||120)));
+  const repeats=Math.max(1,Math.round(s.wrapRepeats??Math.PI*s.diameter/(s.textureSize||120)));
   const ny=s.grid;
   const key=JSON.stringify([s.grid,ny,s.seed,s.feed,s.kill,true]);
   if(key!==previousKey||sim.steps>s.steps){simReset(s.grid,ny,true,s.seed);previousKey=key;}

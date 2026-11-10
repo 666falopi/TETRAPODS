@@ -1,18 +1,22 @@
 import Module from '../vendor/manifold/manifold.js';
 import {makePattern} from './patterns.mjs';
-export const defaults={dtop:50,dbott:40,hgen:100,barthck:5,thick:8,setback:8,hbump:8,fillet:1,chamferAngle:35,supportFree:true,holeRadius:2.5,pitchRadius:13.5,holeAngle:-90,clearance:.5,texStep:1,restStep:4,textureOn:true,kind:'reaction',textureSize:120,scale:6,detail:4,seed:1,contrast:1,level:.5,bevel:1,invert:false,rdPreset:'coral',feed:.0545,kill:.062,grid:128,steps:6000,vwrap:false,spiralColumns:24,spiralTurns:10,spiralAngle:30,spiralOrigin:0,spiralVariation:.08,spiralGap:.06,spiralDirection:1};
+export const defaults={dtop:50,dbott:40,hgen:100,barthck:5,fondoExtra:1,thick:8,setback:8,hbump:8,fillet:1,chamferAngle:35,supportFree:true,holeRadius:2.5,pitchRadius:13.5,holeAngle:-90,clearance:.5,texStep:1,restStep:4,textureOn:true,kind:'reaction',textureSize:78,wrapRepeats:3,scale:6,detail:4,seed:1,contrast:1,level:.5,bevel:1,invert:false,rdPreset:'coral',feed:.0545,kill:.062,grid:128,steps:6000,vwrap:false,spiralColumns:24,spiralTurns:10,spiralAngle:30,spiralOrigin:0,spiralVariation:.08,spiralGap:.06,spiralDirection:1};
 export const presets={coral:[.0545,.062],maze:[.029,.057],spots:[.035,.065],worms:[.078,.061]};
 export function profile(s){
+ if(s.setback<s.hbump)throw Error('El retranqueo debe ser mayor o igual a hbump.');
+ if((s.fondoExtra??1)<1||(s.fondoExtra??1)>25)throw Error('n del fondo debe estar entre 1 y 25 mm.');
+ const hFondo=s.barthck+(s.fondoExtra??1);if(hFondo>=s.hgen-s.barthck)throw Error('El fondo supera el espacio interior.');
  const wallHeight=s.hgen-2*s.barthck;
  if(wallHeight<=1)throw Error('La altura debe superar dos veces el espesor de las bandas.');
  const slope=(s.dtop-s.dbott)/wallHeight,radialThick=s.thick*Math.hypot(1,slope);
  const outerBottom=s.dbott-s.setback,outerTop=s.dtop-s.setback,innerBottom=outerBottom-radialThick,innerTop=outerTop+slope*s.barthck-radialThick;
  if(Math.min(innerBottom,innerTop)<=1)throw Error('Retranqueo + thick dejan sin espacio interior. Aumenta los radios o reduce esos valores.');
  if(innerTop>=s.dtop-.2)throw Error('La inclinación y el espesor dejan la banda superior sin material.');
- const pitchMax=innerBottom-s.holeRadius-s.clearance,pitchMin=(2*s.holeRadius+s.clearance)/Math.sqrt(3);
+ const innerFloor=innerBottom+slope*(hFondo-s.barthck);
+ const pitchMax=Math.min(innerBottom,innerFloor)-s.holeRadius-s.clearance,pitchMin=(2*s.holeRadius+s.clearance)/Math.sqrt(3);
  if(pitchMax<pitchMin)throw Error('Las tres perforaciones no caben con ese radio y separación.');
  const actualPitch=Math.max(pitchMin,Math.min(pitchMax,s.pitchRadius));
- return {wallHeight,slope,radialThick,outerBottom,outerTop,innerBottom,innerTop,pitchMax,pitchMin,actualPitch,points:[[0,0],[s.dbott,0],[s.dbott,s.barthck],[outerBottom,s.barthck],[outerTop,s.hgen-s.barthck],[s.dtop,s.hgen-s.barthck],[s.dtop,s.hgen],[innerTop,s.hgen],[innerBottom,s.barthck],[0,s.barthck]]};
+ return {hFondo,innerFloor,wallHeight,slope,radialThick,outerBottom,outerTop,innerBottom,innerTop,pitchMax,pitchMin,actualPitch,points:[[0,0],[s.dbott,0],[s.dbott,s.barthck],[outerBottom,s.barthck],[outerTop,s.hgen-s.barthck],[s.dtop,s.hgen-s.barthck],[s.dtop,s.hgen],[innerTop,s.hgen],[innerFloor,hFondo],[0,hFondo]]};
 }
 
 // The bump is generated on the complete sharp exterior wall. Fixed chamfer
@@ -125,7 +129,7 @@ export async function build(input,progress=()=>{}){
   let solid=keep(new Manifold(new Mesh({numProp:3,vertProperties:raw.positions,triVerts:raw.indices,faceID:Uint32Array.from({length:raw.indices.length/3},(_,i)=>i)})));
   if(solid.status()!=='NoError')throw Error('No se pudo cerrar la revolución: '+solid.status());
   progress('Abriendo las tres perforaciones de drenaje…');const holes=[];
-  for(let i=0;i<3;i++){const a=(s.holeAngle+i*120)*Math.PI/180,n=Math.max(32,4*Math.ceil(2*Math.PI*s.holeRadius/Math.min(s.restStep,.5)/4));const cyl=keep(Manifold.cylinder(s.barthck+2,s.holeRadius,s.holeRadius,n));const rotated=keep(cyl.rotate([-90,0,0]));holes.push(keep(rotated.translate([p.actualPitch*Math.cos(a),-1,p.actualPitch*Math.sin(a)])));}
+  for(let i=0;i<3;i++){const a=(s.holeAngle+i*120)*Math.PI/180,n=Math.max(32,4*Math.ceil(2*Math.PI*s.holeRadius/Math.min(s.restStep,.5)/4));const cyl=keep(Manifold.cylinder(p.hFondo+2,s.holeRadius,s.holeRadius,n));const rotated=keep(cyl.rotate([-90,0,0]));holes.push(keep(rotated.translate([p.actualPitch*Math.cos(a),-1,p.actualPitch*Math.sin(a)])));}
   const cutters=keep(Manifold.union(holes));solid=keep(solid.subtract(cutters));
   if(solid.status()!=='NoError'||solid.isEmpty())throw Error('No se pudo finalizar la base perforada.');
   const m=solid.getMesh(),positions=new Float32Array(m.numVert*3);for(let i=0;i<m.numVert;i++)for(let k=0;k<3;k++)positions[3*i+k]=m.vertProperties[i*m.numProp+k];
