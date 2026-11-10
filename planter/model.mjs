@@ -1,6 +1,8 @@
 import Module from '../vendor/manifold/manifold.js';
 import {makePattern} from './patterns.mjs';
-export const defaults={dtop:50,dbott:40,hgen:100,barthck:5,fondoExtra:1,thick:8,setback:8,hbump:8,fillet:1,chamferAngle:35,supportFree:true,holeRadius:2.5,pitchRadius:13.5,holeAngle:-90,clearance:.5,texStep:1,restStep:4,textureOn:true,kind:'reaction',textureSize:78,wrapRepeats:3,scale:6,detail:4,seed:1,contrast:1,level:.5,bevel:1,invert:false,rdPreset:'coral',feed:.0545,kill:.062,grid:128,steps:6000,vwrap:false,spiralColumns:24,spiralTurns:10,spiralAngle:30,spiralOrigin:0,spiralVariation:.08,spiralGap:.06,spiralDirection:1};
+export const defaults={dtop:50,dbott:40,hgen:100,barthck:5,fondoExtra:1,thick:8,setback:8,hbump:8,fillet:1,chamferAngle:35,supportFree:true,holeRadius:2.5,pitchRadius:13.5,holeAngle:-90,clearance:.5,texStep:1,restStep:4,textureOn:true,kind:'reaction',textureSize:78,wrapRepeats:3,scale:6,detail:4,seed:1,contrast:1,level:.5,bevel:1,invert:false,rdPreset:'coral',feed:.0545,kill:.062,grid:128,steps:6000,vwrap:false,spiralColumns:24,spiralTurns:10,spiralAngle:30,spiralOrigin:0,spiralVariation:.08,spiralGap:.06,spiralDirection:1,size:"S",lock3:true,perPiece:1,rdCell:.6,patAngle:30,patBend:.3,patWaves:1,patAspect:1.4,patSharp:3};
+// Standard sizes. Radii in mm; the bottom keeps the S ratio dbott/dtop = 0.8 and the height equals the top diameter.
+export const sizes={S:{label:'S · CHICO',dtop:50,dbott:40,hgen:100},M:{label:'M · MEDIANO',dtop:75,dbott:60,hgen:150},ML:{label:'ML · MEDIANO-GRANDE',dtop:100,dbott:80,hgen:200}};
 export const presets={coral:[.0545,.062],maze:[.029,.057],spots:[.035,.065],worms:[.078,.061]};
 export function profile(s){
  if(s.setback<s.hbump)throw Error('El retranqueo debe ser mayor o igual a hbump.');

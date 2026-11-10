@@ -40,7 +40,26 @@ function cells(u, v, p, seed) {
   return Math.min(1, Math.sqrt(best));
 }
 
+// Regular patterns. u wraps once around (or once per module when locked), v uses the same unit.
+// Counts along u are integers, so every pattern closes without a seam.
+const frac = x => x - Math.floor(x), clamp01 = x => Math.max(0, Math.min(1, x));
+const sharpen = (t, k) => k > 1 ? clamp01((t - .5) * k + .5) : t;
+const wave = phase => (1 + Math.cos(2 * Math.PI * phase)) / 2;
+function regular(kind, u, v, s) {
+  const n = Math.max(1, Math.round(s.scale)), tan = Math.tan((s.patAngle ?? 30) * Math.PI / 180);
+  switch (kind) {
+    case 'diamonds': { const a = s.patAspect ?? 1.4, p = u * n + v * n / a, q = u * n - v * n / a;
+      return sharpen(1 - 2 * Math.max(Math.abs(frac(p) - .5), Math.abs(frac(q) - .5)), s.patSharp ?? 1); }
+    case 'vstripes': return sharpen(1 - Math.abs(2 * frac(u * n) - 1), s.patSharp ?? 3);
+    case 'soft': return wave(u * n);
+    case 'softTilt': return wave(n * (u + tan * v));
+    case 'softCurve': return wave(n * (u + tan * v + (s.patBend ?? .3) * Math.sin(2 * Math.PI * (s.patWaves ?? 1) * v / (s.vspan || 1))));
+  }
+}
+export const regularKinds = ['diamonds', 'vstripes', 'soft', 'softTilt', 'softCurve'];
+
 function height(kind, u, v, s) {
+  if (regularKinds.includes(kind)) return regular(kind, u, v, s);
   switch (kind) {
     case 'spiral': return spiralGrid(u, v / (s.height / (Math.PI*s.diameter)), s);
     case 'ridged': return fbm(u, v, s.scale, s.detail, s.seed, true);
@@ -118,14 +137,21 @@ function reactionField(w, h) {
 
 // The pattern formulas and Gray–Scott solver above come from Texture Generator.
 let previousKey='';
+// Locked mode: the texture is a module repeated exactly 3·k times around, so the three mould
+// sectors carry identical copies. Scale then changes the content of the module, not the count.
+export function lockInfo(s){
+ const circumference=Math.PI*s.diameter,R=3*Math.max(1,Math.round(s.perPiece||1)),moduleMM=circumference/R;
+ return {R,moduleMM,grid:Math.max(32,Math.min(512,Math.round(moduleMM/(s.rdCell||.6))))};
+}
 export function makePattern(settings, progress=()=>{}){
- const s={...settings}, w=s.kind==='reaction'?Math.ceil(512/(s.wrapRepeats||1))*(s.wrapRepeats||1):512, h=Math.max(8,Math.round(w*s.height/(Math.PI*s.diameter)));
+ const s={...settings},locked=!!s.lock3&&s.kind!=='spiral',L=lockInfo(s);
+ const repeats=locked?L.R:Math.max(1,Math.round(s.wrapRepeats??Math.PI*s.diameter/(s.textureSize||120)));
+ const tiled=s.kind==='reaction'||locked,w=tiled?Math.ceil(512/repeats)*repeats:512, h=Math.max(8,Math.round(w*s.height/(Math.PI*s.diameter)));
  let data;
  if(s.kind==='reaction'){
-  const repeats=Math.max(1,Math.round(s.wrapRepeats??Math.PI*s.diameter/(s.textureSize||120)));
-  const ny=s.grid;
-  const key=JSON.stringify([s.grid,ny,s.seed,s.feed,s.kill,true]);
-  if(key!==previousKey||sim.steps>s.steps){simReset(s.grid,ny,true,s.seed);previousKey=key;}
+  const grid=locked?L.grid:s.grid,ny=grid;
+  const key=JSON.stringify([grid,ny,s.seed,s.feed,s.kill,true]);
+  if(key!==previousKey||sim.steps>s.steps){simReset(grid,ny,true,s.seed);previousKey=key;}
   while(sim.steps<s.steps){simStep(Math.min(100,s.steps-sim.steps),s.feed,s.kill);if(sim.steps%500===0)progress('Textura: '+sim.steps+' / '+s.steps+' pasos');}
   const tile=reactionField(w,w), tileMM=Math.PI*s.diameter/repeats;
   data=new Float32Array(w*h);
@@ -135,8 +161,8 @@ export function makePattern(settings, progress=()=>{}){
    data[y*w+x]=(at(ix,iy)*(1-fx)+at(ix+1,iy)*fx)*(1-fy)+(at(ix,iy+1)*(1-fx)+at(ix+1,iy+1)*fx)*fy;
   }
  }else{
-  data=new Float32Array(w*h);
-  for(let y=0;y<h;y++)for(let x=0;x<w;x++)data[y*w+x]=height(s.kind,x/w,y/w,s);
+  data=new Float32Array(w*h);const R=locked?repeats:1;s.vspan=R*s.height/(Math.PI*s.diameter);
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++)data[y*w+x]=height(s.kind,frac(x/w*R),y/w*R,s);
  }
  for(let i=0;i<data.length;i++){
   let v=Math.max(0,Math.min(1,(data[i]-.5)*s.contrast+.5));
