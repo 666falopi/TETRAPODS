@@ -1,8 +1,15 @@
 import Module from '../vendor/manifold/manifold.js';
 import {makePattern} from './patterns.mjs';
-export const defaults={dtop:50,dbott:40,hgen:100,barthck:5,fondoExtra:1,thick:8,setback:8,hbump:8,fillet:1,chamferAngle:35,supportFree:true,holeRadius:2.5,pitchRadius:13.5,holeAngle:-90,clearance:.5,texStep:1,restStep:4,textureOn:true,kind:'reaction',textureSize:78,wrapRepeats:3,scale:6,detail:4,seed:1,contrast:1,level:.5,bevel:1,invert:false,rdPreset:'coral',feed:.0545,kill:.062,grid:128,steps:6000,vwrap:false,spiralColumns:24,spiralTurns:10,spiralAngle:30,spiralOrigin:0,spiralVariation:.08,spiralGap:.06,spiralDirection:1,size:"S",lock3:true,perPiece:1,rdCell:.6,patAngle:30,patBend:.3,patWaves:1,patAspect:1.4,patSharp:3};
-// Standard sizes. Radii in mm; the bottom keeps the S ratio dbott/dtop = 0.8 and the height equals the top diameter.
-export const sizes={S:{label:'S · CHICO',dtop:50,dbott:40,hgen:100},M:{label:'M · MEDIANO',dtop:75,dbott:60,hgen:150},ML:{label:'ML · MEDIANO-GRANDE',dtop:100,dbott:80,hgen:200}};
+export const defaults={dtop:50,dbott:40,hgen:100,barthck:5,fondoExtra:3,thick:8,setback:8,hbump:8,fillet:1,chamferAngle:35,supportFree:true,holeRadius:2.5,pitchRadius:13.5,holeAngle:-90,clearance:.5,texStep:1,restStep:4,textureOn:true,kind:'reaction',textureSize:78,wrapRepeats:3,scale:6,detail:4,seed:1,contrast:1,level:.5,bevel:1,invert:false,rdPreset:'coral',feed:.0545,kill:.062,grid:128,steps:6000,vwrap:false,spiralColumns:24,spiralTurns:10,spiralAngle:30,spiralOrigin:0,spiralVariation:.08,spiralGap:.06,spiralDirection:1,size:"S",lock3:true,perPiece:1,rdCell:.6,patAngle:30,patBend:.3,patWaves:1,patAspect:1.4,patSharp:3,nested:false,nestPegs:6,nestPegD:6,nestGap:4,nestThick:.5,nestFondo:.5};
+// Standard sizes. Radii in mm; the bottom keeps the S ratio dbott/dtop = 0.8 and the height equals the top diameter. Floor (hFondo = barthck 5 + fondoExtra) is 8 / 10 / 12 mm.
+export const sizes={S:{label:'S · CHICO',dtop:50,dbott:40,hgen:100,fondoExtra:3},M:{label:'M · MEDIANO',dtop:75,dbott:60,hgen:150,fondoExtra:5},ML:{label:'ML · MEDIANO-GRANDE',dtop:100,dbott:80,hgen:200,fondoExtra:7}};
+// Stacked mode: an S-size copy of the pot printed inside the big one, separated by pegs. Same parameters, wall x nestThick,
+// floor height x nestFondo (the bands are capped so the floor still fits).
+export function nestedSettings(s){
+ const z=sizes.S,p=profile(s),hF=Math.max(2,p.hFondo*(s.nestFondo??.5)),barthck=Math.max(1,Math.min(s.barthck,hF-1));
+ const {label,...dims}=z;
+ return {...s,...dims,size:'S',thick:s.thick*(s.nestThick??.5),barthck,fillet:Math.min(s.fillet,.9*barthck),fondoExtra:Math.max(1,hF-barthck),nested:false};
+}
 export const presets={coral:[.0545,.062],maze:[.029,.057],spots:[.035,.065],worms:[.078,.061]};
 export function profile(s){
  if(s.setback<s.hbump)throw Error('El retranqueo debe ser mayor o igual a hbump.');
@@ -134,10 +141,27 @@ export async function build(input,progress=()=>{}){
   for(let i=0;i<3;i++){const a=(s.holeAngle+i*120)*Math.PI/180,n=Math.max(32,4*Math.ceil(2*Math.PI*s.holeRadius/Math.min(s.restStep,.5)/4));const cyl=keep(Manifold.cylinder(p.hFondo+2,s.holeRadius,s.holeRadius,n));const rotated=keep(cyl.rotate([-90,0,0]));holes.push(keep(rotated.translate([p.actualPitch*Math.cos(a),-1,p.actualPitch*Math.sin(a)])));}
   const cutters=keep(Manifold.union(holes));solid=keep(solid.subtract(cutters));
   if(solid.status()!=='NoError'||solid.isEmpty())throw Error('No se pudo finalizar la base perforada.');
+  let nested=null;
+  if(s.nested){
+   progress('Modo apilado: construyendo el S interior…');
+   const sIn=nestedSettings(s),inner=await build(sIn),pin=inner.profile,off=p.hFondo+s.nestGap;
+   if(off+inner.dimensions[1]>s.hgen-s.barthck)throw Error('El S no cabe en altura: el macetero grande debe medir al menos '+Math.ceil(off+inner.dimensions[1]+s.barthck)+' mm (hoy '+s.hgen+'). Usa M o ML, o baja la altura de los tacos.');
+   // Radial clearance: the S outer surface (with its relief) against the big cavity, per 1 mm of height.
+   const rmax=new Map(),ip=inner.positions;for(let i=0;i<ip.length;i+=3){const b=Math.round(ip[i+1]),r=Math.hypot(ip[i],ip[i+2]);if(!(rmax.get(b)>=r))rmax.set(b,r);}
+   let clearance=Infinity;for(const [b,r] of rmax){const yb=b+off,cav=p.innerFloor+(p.innerTop-p.innerFloor)*(yb-p.hFondo)/(s.hgen-p.hFondo);clearance=Math.min(clearance,cav-r);}
+   if(clearance<.3)throw Error('El S no cabe dentro: holgura radial '+clearance.toFixed(1)+' mm (mínimo 0,3). Usa un macetero más grande o reduce pared y relieve.');
+   const bigVolume=solid.volume(),innerSolid=keep(keep(new Manifold(new Mesh({numProp:3,vertProperties:inner.positions,triVerts:inner.indices}))).translate([0,off,0]));
+   // Pegs: cylinders from the floor top of the big pot up to the underside of the S, between the drain holes.
+   const n=Math.round(s.nestPegs),R=.6*pin.innerFloor,pegs=[];
+   for(let i=0;i<n;i++){const a=(s.holeAngle+30+i*360/n)*Math.PI/180;const c=keep(Manifold.cylinder(s.nestGap+.6,s.nestPegD/2,s.nestPegD/2,32));pegs.push(keep(keep(c.rotate([-90,0,0])).translate([R*Math.cos(a),p.hFondo-.3,R*Math.sin(a)])));}
+   solid=keep(Manifold.union([solid,innerSolid,...pegs]));
+   if(solid.status()!=='NoError'||solid.isEmpty())throw Error('No se pudo unir el S interior con los tacos.');
+   nested={pegs:n,pegD:s.nestPegD,gap:s.nestGap,pegRadius:R,clearance,off,bigVolume,innerVolume:inner.volume,innerDims:inner.dimensions,innerFondo:pin.hFondo,innerThick:sIn.thick};
+  }
   const m=solid.getMesh(),positions=new Float32Array(m.numVert*3);for(let i=0;i<m.numVert;i++)for(let k=0;k<3;k++)positions[3*i+k]=m.vertProperties[i*m.numProp+k];
   const bb=solid.boundingBox(),parts=solid.decompose(),components=parts.length;parts.forEach(m=>m.delete());
   const indices=new Uint32Array(m.triVerts),overhang=analyzeOverhang(positions,indices);
-  return {positions,indices,overhang,volume:solid.volume(),dimensions:bb.max.map((v,i)=>v-bb.min[i]),components,profile:p,pattern:{data:pattern.data,width:pattern.width,height:pattern.height},meshInfo:{texturedFaces:raw.texturedFaces,plainFaces:raw.plainFaces,around:raw.nt,rows:raw.rows},settings:s};
+  return {positions,indices,overhang,volume:solid.volume(),dimensions:bb.max.map((v,i)=>v-bb.min[i]),components,nested,profile:p,pattern:{data:pattern.data,width:pattern.width,height:pattern.height},meshInfo:{texturedFaces:raw.texturedFaces,plainFaces:raw.plainFaces,around:raw.nt,rows:raw.rows},settings:s};
  }finally{owned.reverse().forEach(m=>m.delete());}
 }
 

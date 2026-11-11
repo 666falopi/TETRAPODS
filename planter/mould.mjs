@@ -1,5 +1,5 @@
 import Module from '../vendor/manifold/manifold.js';
-export const mouldDefaults={wall:3,conformal:true,skin:5,skinStep:1,flangeThick:4,windows:true,windowMargin:1,density:2.1,flangeEars:true,rimClearance:3,flange:15,overlap:2.5,pourRadius:20,rotation:0,pinClearance:.2,joints:true,bolt:6,boltClearance:.4,finThick:3,boltSpacing:70,boltEnd:20,keyRadius:2.5,keyHeight:1.5,keyClearance:.2,tongueWidth:10,tongueLength:8,tongueDepth:1.5};
+export const mouldDefaults={wall:3,conformal:true,skin:5,skinStep:1,flangeThick:4,windows:true,windowMargin:1,density:2.1,flangeEars:true,rimClearance:3,lip:2,lipThick:3,lipClearance:.2,flange:15,overlap:2.5,pourRadius:20,rotation:0,pinClearance:.2,joints:true,bolt:6,boltClearance:.4,finThick:3,boltSpacing:70,boltEnd:20,keyRadius:2.5,keyHeight:1.5,keyClearance:.2,tongueWidth:10,tongueLength:8,tongueDepth:1.5};
 export const boltSizes=[4,5,6];
 // Loads from the fresh mortar (cement + sand + water), poured inverted so the column is the planter height.
 // Vibrated mortar behaves like a liquid: hydrostatic pressure p = rho·g·h, times a 1.5 factor for tapping.
@@ -146,7 +146,17 @@ export async function buildMould(model,options={},progress=()=>{}){
      const ring=rev([[rT,H-ft-ov-.01],[s.dtop+tR+flangeW+2,H-ft-ov-.01],[s.dtop+tR+flangeW+2,H+ft+1],[rT,H+ft+1]]);
      const ear=keep(keep(M.cube([s.dtop+tR+flangeW+4,H+2*ft+ov+4,2*half])).translate([0,H-2*ft-ov-2,-half]));
      const trim=keep(ring.subtract(keep(M.union(seamAngles.map(a=>atSeam(ear,a))))));
-     flangeTrim=trim;core=keep(core.subtract(trim));}
+     flangeTrim=trim;core=keep(core.subtract(trim));
+     // Retaining lip: where the flange is cut back, the core plate gets a ring wall that wraps the outside of the
+     // sector ends (o.lip mm tall, o.lipThick thick, o.lipClearance gap). It rises in the pull direction of the
+     // core, so the core lifts off first; no ring at the ears, where the overlap already locks the sectors.
+     if(o.lip>0){
+      const r0=rT+o.lipClearance,r1=r0+o.lipThick;
+      if(r1>s.dtop+tR+flangeW)throw Error('El labio no cabe en la pestaña: baja su espesor o sube la pestaña.');
+      const lipRing=rev([[rT-1,H],[r0,H],[r0,H-o.lip],[r1,H-o.lip],[r1,H+ft],[rT-1,H+ft]]);
+      // Subtract a slightly narrower ear so the lip ends overlap the ear volume instead of sharing its plane (avoids slivers).
+      const ear2=keep(keep(M.cube([s.dtop+tR+flangeW+4,H+2*ft+ov+4,2*(half-.05)])).translate([0,H-2*ft-ov-2,-(half-.05)]));
+      core=keep(core.add(keep(lipRing.subtract(keep(M.union(seamAngles.map(a=>atSeam(ear2,a))))))));hardware.lip=o.lip;}}
     hardware.earHalf=half;}
    hardware.seamBolts=3*n;hardware.coreBolts=3;hardware.keys=3+3*seamKeyY.length;
    hardware.boltLengthSeam=Math.ceil((2*o.finThick+o.bolt+4)/5)*5;hardware.boltLengthCore=Math.ceil((2*ft+ov+o.bolt+4)/5)*5;

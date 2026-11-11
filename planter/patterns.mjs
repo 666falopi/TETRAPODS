@@ -146,7 +146,7 @@ export function lockInfo(s){
 export function makePattern(settings, progress=()=>{}){
  const s={...settings},locked=!!s.lock3&&s.kind!=='spiral',L=lockInfo(s);
  const repeats=locked?L.R:Math.max(1,Math.round(s.wrapRepeats??Math.PI*s.diameter/(s.textureSize||120)));
- const tiled=s.kind==='reaction'||locked,w=tiled?Math.ceil(512/repeats)*repeats:512, h=Math.max(8,Math.round(w*s.height/(Math.PI*s.diameter)));
+ const tiled=s.kind==='reaction'||locked,base=Math.max(512,Math.min(2048,Math.ceil(Math.PI*s.diameter/Math.max(.1,s.texStep||1)))),w=tiled?Math.ceil(base/repeats)*repeats:base, h=Math.max(8,Math.round(w*s.height/(Math.PI*s.diameter)));
  let data;
  if(s.kind==='reaction'){
   const grid=locked?L.grid:s.grid,ny=grid;
@@ -164,15 +164,16 @@ export function makePattern(settings, progress=()=>{}){
   data=new Float32Array(w*h);const R=locked?repeats:1;s.vspan=R*s.height/(Math.PI*s.diameter);
   for(let y=0;y<h;y++)for(let x=0;x<w;x++)data[y*w+x]=height(s.kind,frac(x/w*R),y/w*R,s);
  }
- for(let i=0;i<data.length;i++){
-  let v=Math.max(0,Math.min(1,(data[i]-.5)*s.contrast+.5));
+ // Contrast / bevel are applied AFTER interpolating the raw field (per sample), not before: shaping first turns
+ // the map into near-binary texels and bilinear sampling then draws staircases along diagonal edges.
+ const shape=r=>{let v=Math.max(0,Math.min(1,(r-.5)*s.contrast+.5));
   if(s.bevel<1){const t=Math.max(0,Math.min(1,(v-s.level)/Math.max(.02,s.bevel)+.5));v=t*t*(3-2*t);}
-  data[i]=s.invert?1-v:v;
- }
+  return s.invert?1-v:v;};
+ const raw=data,shown=new Float32Array(raw.length);for(let i=0;i<raw.length;i++)shown[i]=shape(raw[i]);
  function sample(u,v){
   const x=wrap(u,1)*w,y=Math.max(0,Math.min(h-1,v*(h-1))),ix=Math.floor(x),iy=Math.floor(y),fx=x-ix,fy=y-iy;
-  const at=(x,y)=>data[Math.min(h-1,y)*w+wrap(x,w)];
-  return (at(ix,iy)*(1-fx)+at(ix+1,iy)*fx)*(1-fy)+(at(ix,iy+1)*(1-fx)+at(ix+1,iy+1)*fx)*fy;
+  const at=(x,y)=>raw[Math.min(h-1,y)*w+wrap(x,w)];
+  return shape((at(ix,iy)*(1-fx)+at(ix+1,iy)*fx)*(1-fy)+(at(ix,iy+1)*(1-fx)+at(ix+1,iy+1)*fx)*fy);
  }
- return {sample,data,width:w,height:h};
+ return {sample,data:shown,width:w,height:h};
 }
