@@ -29,6 +29,7 @@ Open http://localhost:8000/ to see the dashboard. Keep the server running while 
 | `rd-branches/` | Reaction-diffusion on a sphere, extruded as rounded tapering strands rather than walls; roundness, thickness and variation controls, STL export |
 | `slice-extrusion/` | Stack of circular slices (Voronoi or reaction-diffusion), lin/log/exp blending, per-slice rotation, STL export |
 | `rd-sphere/` | Reaction-diffusion on a sphere grown outward in shells into branching coral-like solids; branching, taper and STL export |
+| `pattern_generator/` | Weaving draft generator (threading, tie-up, treadling) with a Pascal-triangle variant and PNG export |
 
 The tetrapod volume tool counts the overlapping centre once and reports approximate solid volume. Mould tools are geometric prototypes; draft maps and sampled release checks do not certify that a mould can be manufactured and released.
 

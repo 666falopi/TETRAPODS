@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pascal Weaving Draft</title>
+<style>
+  :root { --bg:#f4f4f2; --panel:#fff; --ink:#222; --line:#d6d6d0; --accent:#2b5fd9; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.4 system-ui, sans-serif; background:var(--bg); color:var(--ink); display:flex; height:100vh; }
+  aside { width:280px; flex:none; background:var(--panel); border-right:1px solid var(--line); padding:14px; overflow-y:auto; }
+  main { flex:1; overflow:auto; padding:16px; }
+  h1 { font-size:16px; margin:0 0 4px; }
+  fieldset { border:1px solid var(--line); border-radius:6px; margin:0 0 12px; padding:8px 10px; }
+  legend { font-size:12px; color:#666; padding:0 4px; }
+  label { display:flex; justify-content:space-between; align-items:center; margin:4px 0; gap:8px; }
+  input[type=number] { width:84px; }
+  select, button { font:inherit; }
+  button { padding:4px 8px; border:1px solid var(--line); background:#fafafa; border-radius:4px; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  .row { display:flex; flex-wrap:wrap; gap:6px; }
+  .hint { font-size:12px; color:#666; margin:6px 0 0; }
+  a { color:var(--accent); }
+  pre { margin:6px 0 0; font:12px/1.35 ui-monospace, monospace; white-space:pre-wrap; background:#f7f7f5; padding:6px; border-radius:4px; }
+  canvas { background:#fff; box-shadow:0 0 0 1px var(--line); }
+  @media (max-width:700px){ body{flex-direction:column;height:auto} aside{width:auto;border-right:0;border-bottom:1px solid var(--line)} }
+</style>
+</head>
+<body>
+<aside>
+  <h1>Pascal Weaving Draft</h1>
+  <p class="hint" style="margin:0 0 10px"><a href="../">&larr; dashboard</a> &middot; <a href="index.html">&larr; manual editor</a></p>
+
+  <fieldset>
+    <legend>One Pascal definition</legend>
+    <label>Value &rarr; shaft/treadle
+      <select id="map">
+        <option value="low">low 2 bits</option>
+        <option value="high">high 2 bits</option>
+        <option value="pop">popcount mod 4</option>
+      </select>
+    </label>
+    <p class="hint">The triangle is read row by row into one sequence of 16-bit numbers: C(0,0), C(1,0), C(1,1), C(2,0)&hellip; each mod 2<sup>16</sup>. Every target below reads this same sequence, only from a different position.</p>
+  </fieldset>
+
+  <fieldset>
+    <legend>Targets (offset into the sequence)</legend>
+    <label><span><input type="checkbox" id="useX" checked> Threading (x)</span> <input type="number" id="offX" min="0" max="1000000" value="0"></label>
+    <label><span><input type="checkbox" id="useY" checked> Treadling (y)</span> <input type="number" id="offY" min="0" max="1000000" value="50"></label>
+    <label><span><input type="checkbox" id="useT" checked> Tie-up (4&times;4)</span> <input type="number" id="offT" min="0" max="1000000" value="220"></label>
+    <label><span><input type="checkbox" id="useR" checked> Transforms</span> <input type="number" id="offR" min="0" max="1000000" value="300"></label>
+    <label>Transform count <input type="number" id="nR" min="0" max="16" value="3"></label>
+    <div class="row" style="margin-top:6px">
+      <button id="rand">Random offsets</button>
+      <button id="step">Next &rarr; (+1 all)</button>
+    </div>
+    <p class="hint">Unchecked targets use the plain default: straight threading, straight treadling, 2/2 twill tie-up. The tie-up is one number from the sequence as a 4&times;4 bit grid. Each transform is picked by a number from the sequence (value mod 7).</p>
+  </fieldset>
+
+  <fieldset>
+    <legend>Size</legend>
+    <label>Warp ends <input type="number" id="ends" min="2" max="2000" value="96"></label>
+    <label>Weft picks <input type="number" id="picks" min="2" max="2000" value="96"></label>
+    <label>Cell size (px) <input type="number" id="cell" min="1" max="40" value="6"></label>
+    <input type="range" id="cellRange" min="1" max="40" value="6" style="width:100%">
+    <label>Keep canvas size <input type="checkbox" id="lockSize"></label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Look</legend>
+    <label>Warp (up) <input type="color" id="warpColor" value="#111111"></label>
+    <label>Weft (down) <input type="color" id="weftColor" value="#ffffff"></label>
+    <label>Grid in pattern <input type="checkbox" id="showGrid"></label>
+    <label>Show draft <input type="checkbox" id="showDraft" checked></label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Export</legend>
+    <div class="row"><button id="exportDraft">Draft PNG</button><button id="exportCloth">Cloth PNG</button></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Readout</legend>
+    <pre id="readout"></pre>
+  </fieldset>
+</aside>
+<main><canvas id="c"></canvas></main>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const canvas = $('c'), ctx = canvas.getContext('2d');
+  const PAD = 22, GAP = 14, S = 4, T = 4, MAXSEQ = 2000000;
+
+  const range = n => Array.from({ length:n }, (_, i) => i);
+  const cyc = (seq, n) => range(n).map(i => seq[i % seq.length]);
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, Number(v) | 0 || lo));
+  const mirror = a => a.length < 2 ? a.slice() : [...a, ...a.slice(1, -1).reverse()];
+  const fold = (a, n) => cyc(mirror(a.slice(0, Math.max(2, Math.ceil(n / 4)))), n);
+
+  const st = { N:96, M:96, c:6, thr:[], tre:[], tie:[] };
+  const lock = { w:0, h:0 };
+
+  // ---- the single Pascal definition ----
+  // seq[t] = C(r, k) mod 2^16 with t = r(r+1)/2 + k. Uint16Array wraps mod 2^16 on every add.
+  let seq = new Uint16Array(0);
+  function ensureSeq(len) {
+    if (seq.length > len) return;
+    let rows = 1; while (rows * (rows + 1) / 2 <= len) rows++;
+    const out = new Uint16Array(rows * (rows + 1) / 2), row = new Uint16Array(rows + 1);
+    row[0] = 1;
+    for (let r = 0, p = 0; r < rows; r++) {
+      if (r > 0) for (let k = r; k > 0; k--) row[k] += row[k - 1];
+      out.set(row.subarray(0, r + 1), p); p += r + 1;
+    }
+    seq = out;
+  }
+  const popcount = v => { let n = 0; for (; v; v &= v - 1) n++; return n; };
+  const toIndex = v => {
+    const m = $('map').value;
+    return m === 'low' ? v & 3 : m === 'high' ? v >> 14 : popcount(v) & 3;
+  };
+
+  // ---- transforms, chosen by sequence values ----
+  const transforms = [
+    ['mirror threading',  d => d.thr = fold(d.thr, st.N)],
+    ['mirror treadling',  d => d.tre = fold(d.tre, st.M)],
+    ['reverse threading', d => d.thr = d.thr.slice().reverse()],
+    ['reverse treadling', d => d.tre = d.tre.slice().reverse()],
+    ['invert tie-up',     d => d.tie = d.tie.map(r => r.map(v => !v))],
+    ['rotate shafts',     d => d.thr = d.thr.map(s => (s + 1) % S)],
+    ['rotate treadles',   d => d.tre = d.tre.map(t => (t + 1) % T)]
+  ];
+
+  const twill = () => range(S).map(s => range(T).map(t => t === s || t === (s + S - 1) % S));
+
+  function generate() {
+    const { N, M } = st, off = id => clamp($(id).value, 0, 1000000);
+    const offX = off('offX'), offY = off('offY'), offT = off('offT'), offR = off('offR');
+    const nR = clamp($('nR').value, 0, 16);
+    ensureSeq(Math.min(MAXSEQ, Math.max(offX + N, offY + M, offT + 1, offR + nR) + 1));
+    const at = i => seq[i % seq.length];
+
+    const d = {
+      thr: $('useX').checked ? range(N).map(i => toIndex(at(offX + i))) : cyc(range(S), N),
+      tre: $('useY').checked ? range(M).map(j => toIndex(at(offY + j))) : cyc(range(T), M),
+      tie: twill()
+    };
+    let tieVal = null;
+    if ($('useT').checked) {
+      tieVal = at(offT);
+      d.tie = range(S).map(s => range(T).map(t => !!((tieVal >> (s * T + t)) & 1)));
+    }
+    const applied = [];
+    if ($('useR').checked) for (let n = 0; n < nR; n++) {
+      const id = at(offR + n) % transforms.length;
+      transforms[id][1](d); applied.push(transforms[id][0]);
+    }
+    Object.assign(st, { thr:d.thr, tre:d.tre, tie:d.tie });
+    readout(tieVal, applied, at, offX, offY);
+  }
+
+  function readout(tieVal, applied, at, offX, offY) {
+    const lines = [];
+    if (tieVal !== null) {
+      lines.push('tie-up value ' + tieVal + ' (0b' + tieVal.toString(2).padStart(16, '0') + ')');
+      for (let s = S - 1; s >= 0; s--) lines.push('  shaft ' + (s + 1) + ' ' + st.tie[s].map(v => v ? '#' : '.').join(''));
+    }
+    lines.push('x: ' + range(8).map(i => at(offX + i)).join(' ') + ' ...');
+    lines.push('y: ' + range(8).map(i => at(offY + i)).join(' ') + ' ...');
+    lines.push('transforms: ' + (applied.length ? applied.join(', ') : 'none'));
+    $('readout').textContent = lines.join('\n');
+  }
+
+  // ---- drawing ----
+  const isUp = (i, j) => { const s = st.thr[i], t = st.tre[j]; return st.tie[s][t]; };
+
+  function layout() {
+    const { N, M, c } = st;
+    const thr = { x:PAD, y:PAD, w:N * c, h:S * c };
+    const tie = { x:PAD + N * c + GAP, y:PAD, w:T * c, h:S * c };
+    const dd  = { x:PAD, y:PAD + S * c + GAP, w:N * c, h:M * c };
+    const tre = { x:tie.x, y:dd.y, w:T * c, h:M * c };
+    return { thr, tie, dd, tre, W:tre.x + tre.w + PAD, H:dd.y + dd.h + PAD };
+  }
+
+  function grid(r, cols, rows, c) {
+    if (c < 3) return;
+    ctx.strokeStyle = '#d0d0cc'; ctx.lineWidth = 1; ctx.beginPath();
+    for (let i = 0; i <= cols; i++) { ctx.moveTo(r.x + i * c + .5, r.y); ctx.lineTo(r.x + i * c + .5, r.y + r.h); }
+    for (let j = 0; j <= rows; j++) { ctx.moveTo(r.x, r.y + j * c + .5); ctx.lineTo(r.x + r.w, r.y + j * c + .5); }
+    ctx.stroke();
+    ctx.strokeStyle = '#a8a8a2'; ctx.beginPath();
+    for (let i = 0; i <= cols; i += 4) { ctx.moveTo(r.x + i * c + .5, r.y); ctx.lineTo(r.x + i * c + .5, r.y + r.h); }
+    for (let j = 0; j <= rows; j += 4) { ctx.moveTo(r.x, r.y + j * c + .5); ctx.lineTo(r.x + r.w, r.y + j * c + .5); }
+    ctx.stroke();
+  }
+
+  const hexRgb = h => [1, 3, 5].map(k => parseInt(h.slice(k, k + 2), 16));
+  const buf = document.createElement('canvas');
+  function drawCloth(g, ox, oy, c) {
+    const { N, M } = st, warp = hexRgb($('warpColor').value), weft = hexRgb($('weftColor').value);
+    buf.width = N; buf.height = M;
+    const bg = buf.getContext('2d'), img = bg.createImageData(N, M), d = img.data;
+    for (let j = 0, p = 0; j < M; j++) for (let i = 0; i < N; i++, p += 4) {
+      const col = isUp(i, j) ? warp : weft;
+      d[p] = col[0]; d[p + 1] = col[1]; d[p + 2] = col[2]; d[p + 3] = 255;
+    }
+    bg.putImageData(img, 0, 0);
+    g.imageSmoothingEnabled = false;
+    g.drawImage(buf, ox, oy, N * c, M * c);
+    if ($('showGrid').checked && c >= 3) {
+      g.strokeStyle = 'rgba(128,128,128,.6)'; g.lineWidth = 1; g.beginPath();
+      for (let i = 0; i <= N; i++) { g.moveTo(ox + i * c + .5, oy); g.lineTo(ox + i * c + .5, oy + M * c); }
+      for (let j = 0; j <= M; j++) { g.moveTo(ox, oy + j * c + .5); g.lineTo(ox + N * c, oy + j * c + .5); }
+      g.stroke();
+    }
+  }
+
+  function draw() {
+    const { N, M, c } = st, dpr = window.devicePixelRatio || 1;
+    const showDraft = $('showDraft').checked;
+    // with the draft hidden the cloth sits alone in the canvas
+    const L = showDraft ? layout() : { dd:{ x:PAD, y:PAD, w:N * c, h:M * c }, W:N * c + 2 * PAD, H:M * c + 2 * PAD };
+    canvas.width = L.W * dpr; canvas.height = L.H * dpr;
+    canvas.style.width = L.W + 'px'; canvas.style.height = L.H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, L.W, L.H);
+    drawCloth(ctx, L.dd.x, L.dd.y, c);
+    ctx.strokeStyle = '#888'; ctx.strokeRect(L.dd.x + .5, L.dd.y + .5, L.dd.w, L.dd.h);
+    if (!showDraft) return;
+
+    const ink = '#111', inset = c >= 3 ? 1 : 0;
+    grid(L.thr, N, S, c);
+    for (let i = 0; i < N; i++) {
+      ctx.fillStyle = ink;
+      ctx.fillRect(L.thr.x + i * c + inset, L.thr.y + (S - 1 - st.thr[i]) * c + inset, c - inset, c - inset);
+    }
+    grid(L.tie, T, S, c);
+    for (let s = 0; s < S; s++) for (let t = 0; t < T; t++) if (st.tie[s][t]) {
+      ctx.fillStyle = ink;
+      if (c < 6) { ctx.fillRect(L.tie.x + t * c, L.tie.y + (S - 1 - s) * c, c, c); continue; }
+      ctx.beginPath();
+      ctx.arc(L.tie.x + t * c + c / 2 + .5, L.tie.y + (S - 1 - s) * c + c / 2 + .5, Math.max(2, c * .33), 0, 7); ctx.fill();
+    }
+    grid(L.tre, T, M, c);
+    for (let j = 0; j < M; j++) {
+      ctx.fillStyle = ink;
+      ctx.fillRect(L.tre.x + st.tre[j] * c + inset, L.tre.y + j * c + inset, c - inset, c - inset);
+    }
+    if (c >= 8) {
+      ctx.fillStyle = '#666'; ctx.font = Math.min(11, c) + 'px system-ui';
+      ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+      for (let s = 0; s < S; s++) ctx.fillText(s + 1, L.thr.x - 4, L.thr.y + (S - 1 - s) * c + c / 2);
+      ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+      for (let t = 0; t < T; t++) ctx.fillText(t + 1, L.tie.x + t * c + c / 2, L.tie.y - 3);
+    }
+  }
+
+  // ---- wiring ----
+  function refresh() { generate(); draw(); }
+
+  function resize(e) {
+    let N = clamp($('ends').value, 2, 2000), M = clamp($('picks').value, 2, 2000);
+    const cellChanged = e && (e.target.id === 'cell' || e.target.id === 'cellRange');
+    st.c = clamp($('cell').value, 1, 40);
+    if ($('lockSize').checked) {
+      if (cellChanged) { N = clamp(Math.round(lock.w / st.c), 2, 2000); M = clamp(Math.round(lock.h / st.c), 2, 2000); }
+      else { lock.w = N * st.c; lock.h = M * st.c; }
+    }
+    st.N = N; st.M = M;
+    $('ends').value = N; $('picks').value = M; $('cell').value = st.c; $('cellRange').value = st.c;
+    refresh();
+  }
+  ['ends','picks','cell'].forEach(id => $(id).addEventListener('change', resize));
+  $('cellRange').addEventListener('input', e => { $('cell').value = e.target.value; resize(e); });
+  $('lockSize').addEventListener('change', () => { lock.w = st.N * st.c; lock.h = st.M * st.c; });
+
+  ['map','useX','useY','useT','useR','offX','offY','offT','offR','nR'].forEach(id => $(id).addEventListener('input', refresh));
+  ['warpColor','weftColor','showGrid','showDraft'].forEach(id => $(id).addEventListener('input', draw));
+
+  $('rand').onclick = () => {
+    ['offX','offY','offT','offR'].forEach(id => $(id).value = Math.floor(Math.random() * 20000));
+    refresh();
+  };
+  $('step').onclick = () => {
+    ['offX','offY','offT','offR'].forEach(id => $(id).value = clamp($(id).value, 0, 1000000) + 1);
+    refresh();
+  };
+
+  const download = (href, name) => { const a = document.createElement('a'); a.href = href; a.download = name; a.click(); };
+  $('exportDraft').onclick = () => download(canvas.toDataURL('image/png'), 'pascal-draft.png');
+  $('exportCloth').onclick = () => {
+    const c = st.c, cv = document.createElement('canvas');
+    cv.width = st.N * c; cv.height = st.M * c;
+    drawCloth(cv.getContext('2d'), 0, 0, c);
+    download(cv.toDataURL('image/png'), 'pascal-cloth.png');
+  };
+
+  resize();
+})();
+</script>
+</body>
+</html>

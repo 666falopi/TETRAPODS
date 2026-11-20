@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weaving Draft Generator</title>
+<style>
+  :root { --bg:#f4f4f2; --panel:#fff; --ink:#222; --line:#d6d6d0; --accent:#2b5fd9; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.4 system-ui, sans-serif; background:var(--bg); color:var(--ink); display:flex; height:100vh; }
+  aside { width:260px; flex:none; background:var(--panel); border-right:1px solid var(--line); padding:14px; overflow-y:auto; }
+  main { flex:1; overflow:auto; padding:16px; }
+  h1 { font-size:16px; margin:0 0 10px; }
+  fieldset { border:1px solid var(--line); border-radius:6px; margin:0 0 12px; padding:8px 10px; }
+  legend { font-size:12px; color:#666; padding:0 4px; }
+  label { display:flex; justify-content:space-between; align-items:center; margin:4px 0; gap:8px; }
+  input[type=number] { width:64px; }
+  select, button { font:inherit; }
+  button { padding:4px 8px; border:1px solid var(--line); background:#fafafa; border-radius:4px; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  .row { display:flex; flex-wrap:wrap; gap:6px; }
+  .hint { font-size:12px; color:#666; margin:6px 0 0; }
+  canvas { background:#fff; box-shadow:0 0 0 1px var(--line); cursor:crosshair; }
+  @media (max-width:700px){ body{flex-direction:column;height:auto} aside{width:auto;border-right:0;border-bottom:1px solid var(--line)} }
+</style>
+</head>
+<body>
+<aside>
+  <h1>Weaving Draft Generator</h1>
+  <p class="hint" style="margin:0 0 10px"><a href="../">&larr; dashboard</a> &middot; <a href="pascal.html">Pascal triangle demo &rarr;</a></p>
+
+  <fieldset>
+    <legend>Preset</legend>
+    <label>Pattern
+      <select id="preset"></select>
+    </label>
+    <div class="row">
+      <button id="randomize">Randomize all</button>
+      <button id="randomThreading">Random threading (x)</button>
+      <button id="randomTreadling">Random treadling (y)</button>
+      <button id="randomTieup">Random tie-up</button>
+      <button id="clear">Clear</button>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Pascal triangle</legend>
+    <label>Enable (overrides draft) <input type="checkbox" id="pascalOn"></label>
+    <label>Module size <select id="pascalM"><option>4</option><option>3</option><option>2</option><option>1</option></select></label>
+    <label>Layout <select id="pascalLayout">
+      <option value="left">Left-aligned</option><option value="center">Centered pyramid</option></select></label>
+    <label>Bit order <select id="pascalBits">
+      <option value="lsb-row">LSB first, rows</option><option value="msb-row">MSB first, rows</option>
+      <option value="lsb-col">LSB first, columns</option><option value="msb-col">MSB first, columns</option></select></label>
+    <label>Start row <input type="number" id="pascalStart" min="0" max="4000" value="0"></label>
+    <label>Invert bits <input type="checkbox" id="pascalInvert"></label>
+    <p class="hint">Each module is one value C(row, col) mod 2<sup>m&sup2;</sup> (2<sup>16</sup> for 4&times;4), drawn as m&times;m bits. The draft grids are shown faded while this is on; clicking one switches it off.</p>
+  </fieldset>
+
+  <fieldset>
+    <legend>Size</legend>
+    <label>Shafts <input type="number" id="shafts" min="2" max="24" value="4"></label>
+    <label>Treadles <input type="number" id="treadles" min="2" max="24" value="4"></label>
+    <label>Warp ends <input type="number" id="ends" min="2" max="2000" value="48"></label>
+    <label>Weft picks <input type="number" id="picks" min="2" max="2000" value="48"></label>
+    <label>Cell size (px) <input type="number" id="cell" min="1" max="40" value="12"></label>
+    <input type="range" id="cellRange" min="1" max="40" value="12" style="width:100%">
+    <label>Keep canvas size <input type="checkbox" id="lockSize"></label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Colors</legend>
+    <label>Warp (up) <input type="color" id="warpColor" value="#111111"></label>
+    <label>Weft (down) <input type="color" id="weftColor" value="#ffffff"></label>
+    <label>Grid in pattern <input type="checkbox" id="showGrid" checked></label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Transform</legend>
+    <div class="row">
+      <button id="mirrorThreading">Mirror threading</button>
+      <button id="mirrorTreadling">Mirror treadling</button>
+      <button id="reverseThreading">Reverse threading</button>
+      <button id="reverseTreadling">Reverse treadling</button>
+      <button id="straightThreading">Straight threading</button>
+      <button id="straightTreadling">Straight treadling</button>
+      <button id="invert">Invert (swap warp/weft)</button>
+      <button id="randomTransform">Random transform</button>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Export</legend>
+    <div class="row">
+      <button id="exportDraft">Draft PNG</button>
+      <button id="exportCloth">Cloth PNG</button>
+      <button id="exportJson">JSON</button>
+    </div>
+  </fieldset>
+
+  <p class="hint">Click a cell in the threading (top left), tie-up (top right) or treadling (bottom right) to edit. Threading and treadling allow one mark per column / row. The drawdown (bottom left) is computed: a cell is warp-colored where the shaft of that end is tied to the treadle of that pick.</p>
+</aside>
+<main><canvas id="c"></canvas></main>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const canvas = $('c'), ctx = canvas.getContext('2d');
+  const PAD = 22, GAP = 14;
+
+  // Draft state. threading[end] = shaft index, treadling[pick] = treadle index, tieup[shaft][treadle] = bool
+  const st = { S:4, T:4, N:48, M:48, c:12, threading:[], treadling:[], tieup:[] };
+
+  // ---- helpers to build common structures ----
+  const range = n => Array.from({ length:n }, (_, i) => i);
+  const cyc = (seq, n) => range(n).map(i => seq[i % seq.length]);
+  const straight = n => range(n);
+  const point = n => n < 2 ? [0] : [...range(n), ...range(n - 2).map(i => n - 2 - i)];
+  const emptyTie = (S, T) => range(S).map(() => Array(T).fill(false));
+  const twillTie = (S, T, up) => {
+    const t = emptyTie(S, T);
+    for (let tr = 0; tr < T; tr++) for (let k = 0; k < up; k++) t[(tr + k) % S][tr] = true;
+    return t;
+  };
+
+  const presets = {
+    'Plain weave': () => ({ S:2, T:2, thr:straight(2), tre:straight(2), tie:twillTie(2, 2, 1) }),
+    '2/2 twill': () => ({ S:4, T:4, thr:straight(4), tre:straight(4), tie:twillTie(4, 4, 2) }),
+    '3/1 twill': () => ({ S:4, T:4, thr:straight(4), tre:straight(4), tie:twillTie(4, 4, 3) }),
+    'Herringbone': () => ({ S:4, T:4, thr:point(4), tre:point(4), tie:twillTie(4, 4, 2) }),
+    'Diamond twill': () => ({ S:6, T:6, thr:point(6), tre:point(6), tie:twillTie(6, 6, 3) }),
+    'Broken twill (like the picture)': () => ({
+      S:4, T:4, thr:straight(4), tie:twillTie(4, 4, 2),
+      tre:[0,0,0,1,2,3,0,1,3,0,1,2,3,3,3,2,1,0,3,2,0,3,2,1,0,0,0,1,2,3,3]
+    }),
+    '5-end satin': () => ({ S:5, T:5, thr:straight(5), tre:[0,2,4,1,3], tie:twillTie(5, 5, 1) }),
+    'Basket (2/2)': () => ({ S:2, T:2, thr:[0,0,1,1], tre:[0,0,1,1], tie:twillTie(2, 2, 1) })
+  };
+
+  function applyPreset(name) {
+    const p = presets[name]();
+    st.S = p.S; st.T = p.T;
+    st.tieup = p.tie;
+    st.threading = cyc(p.thr, st.N);
+    st.treadling = cyc(p.tre, st.M);
+    syncInputs();
+    draw();
+  }
+
+  const rnd = n => Math.floor(Math.random() * n);
+  // random repeat unit, optionally point-mirrored so it reads as a symmetric motif
+  const randomSeq = (values, n) => {
+    const unit = range(4 + rnd(12)).map(() => rnd(values));
+    return cyc(Math.random() < 0.5 ? unit : mirror(unit), n);
+  };
+  const randomThreading = () => { st.threading = randomSeq(st.S, st.N); };
+  const randomTreadling = () => { st.treadling = randomSeq(st.T, st.M); };
+  const randomTieup = () => {
+    const { S, T } = st;
+    st.tieup = emptyTie(S, T);
+    for (let t = 0; t < T; t++) {
+      const k = 1 + rnd(S - 1);
+      range(S).sort(() => Math.random() - 0.5).slice(0, k).forEach(s => st.tieup[s][t] = true);
+    }
+  };
+  function randomize() { randomTieup(); randomThreading(); randomTreadling(); draw(); }
+
+  // point-mirror a sequence without repeating the turning points
+  const mirror = a => a.length < 2 ? a.slice() : [...a, ...a.slice(1, -1).reverse()];
+
+  // ---- computation ----
+  const isWarpUp = (i, j) => {
+    const s = st.threading[i], t = st.treadling[j];
+    return s >= 0 && t >= 0 && st.tieup[s][t];
+  };
+
+  // ---- Pascal triangle modules ----
+  // Module (r, k) holds C(r, k) mod 2^(m*m), drawn as an m x m block of bits. Uint16Array wraps mod 2^16 for free.
+  function pascalBitmap(N, M) {
+    const m = +$('pascalM').value, bits = m * m, mask = (1 << bits) - 1;
+    const [pos, major] = $('pascalBits').value.split('-');
+    const centered = $('pascalLayout').value === 'center', inv = $('pascalInvert').checked;
+    const start = clamp($('pascalStart').value, 0, 4000);
+    const rows = Math.ceil(M / m), out = new Uint8Array(N * M);
+    // per-module-cell bit index, precomputed
+    const bitAt = [];
+    for (let b = 0; b < m; b++) for (let a = 0; a < m; a++) {
+      const n = major === 'row' ? b * m + a : a * m + b;
+      bitAt.push(pos === 'lsb' ? n : bits - 1 - n);
+    }
+    const row = new Uint16Array(start + rows + 1); row[0] = 1;
+    const x0 = Math.floor(N / 2) - Math.floor(m / 2);
+    for (let r = 0; r < start + rows; r++) {
+      if (r > 0) for (let k = r; k > 0; k--) row[k] = (row[k] + row[k - 1]) & 0xffff;
+      if (r < start) continue;
+      const my = (r - start) * m, shift = Math.floor(r * m / 2);
+      for (let k = 0; k <= r; k++) {
+        const mx = centered ? x0 - shift + k * m : k * m;
+        if (mx >= N) break;
+        if (mx + m <= 0) continue;
+        const v = row[k] & mask;
+        for (let b = 0; b < m; b++) for (let a = 0; a < m; a++) {
+          const x = mx + a, y = my + b;
+          if (x < 0 || x >= N || y >= M) continue;
+          out[y * N + x] = ((v >> bitAt[b * m + a]) & 1) ^ inv;
+        }
+      }
+    }
+    return out;
+  }
+
+  // ---- layout ----
+  function layout() {
+    const { S, T, N, M, c } = st;
+    const thr = { x:PAD, y:PAD, w:N * c, h:S * c };
+    const tie = { x:PAD + N * c + GAP, y:PAD, w:T * c, h:S * c };
+    const dd  = { x:PAD, y:PAD + S * c + GAP, w:N * c, h:M * c };
+    const tre = { x:tie.x, y:dd.y, w:T * c, h:M * c };
+    return { thr, tie, dd, tre, W:tre.x + tre.w + PAD, H:dd.y + dd.h + PAD };
+  }
+
+  // ---- drawing ----
+  function grid(r, cols, rows, c) {
+    if (c < 3) return; // lines would swallow the cells
+    ctx.strokeStyle = '#d0d0cc'; ctx.lineWidth = 1; ctx.beginPath();
+    for (let i = 0; i <= cols; i++) { ctx.moveTo(r.x + i * c + .5, r.y); ctx.lineTo(r.x + i * c + .5, r.y + r.h); }
+    for (let j = 0; j <= rows; j++) { ctx.moveTo(r.x, r.y + j * c + .5); ctx.lineTo(r.x + r.w, r.y + j * c + .5); }
+    ctx.stroke();
+    // heavier line every 4 cells to aid counting
+    ctx.strokeStyle = '#a8a8a2'; ctx.beginPath();
+    for (let i = 0; i <= cols; i += 4) { ctx.moveTo(r.x + i * c + .5, r.y); ctx.lineTo(r.x + i * c + .5, r.y + r.h); }
+    for (let j = 0; j <= rows; j += 4) { ctx.moveTo(r.x, r.y + j * c + .5); ctx.lineTo(r.x + r.w, r.y + j * c + .5); }
+    ctx.stroke();
+  }
+
+  function draw() {
+    const L = layout(), { S, T, N, M, c } = st;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = L.W * dpr; canvas.height = L.H * dpr;
+    canvas.style.width = L.W + 'px'; canvas.style.height = L.H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, L.W, L.H);
+
+    drawCloth(ctx, L.dd.x, L.dd.y, c);
+
+    if ($('pascalOn').checked) ctx.globalAlpha = .25;
+    const ink = '#111', inset = c >= 3 ? 1 : 0;
+    // threading: shaft 1 at the bottom row
+    grid(L.thr, N, S, c);
+    for (let i = 0; i < N; i++) {
+      const s = st.threading[i];
+      if (s >= 0) { ctx.fillStyle = ink; ctx.fillRect(L.thr.x + i * c + inset, L.thr.y + (S - 1 - s) * c + inset, c - inset, c - inset); }
+    }
+    // tie-up
+    grid(L.tie, T, S, c);
+    for (let s = 0; s < S; s++) for (let t = 0; t < T; t++) if (st.tieup[s][t]) {
+      ctx.fillStyle = ink;
+      if (c < 6) { ctx.fillRect(L.tie.x + t * c, L.tie.y + (S - 1 - s) * c, c, c); continue; }
+      ctx.beginPath();
+      ctx.arc(L.tie.x + t * c + c / 2 + .5, L.tie.y + (S - 1 - s) * c + c / 2 + .5, Math.max(2, c * .33), 0, 7); ctx.fill();
+    }
+    // treadling
+    grid(L.tre, T, M, c);
+    for (let j = 0; j < M; j++) {
+      const t = st.treadling[j];
+      if (t >= 0) { ctx.fillStyle = ink; ctx.fillRect(L.tre.x + t * c + inset, L.tre.y + j * c + inset, c - inset, c - inset); }
+    }
+    ctx.globalAlpha = 1;
+    // drawdown outline
+    ctx.strokeStyle = '#888'; ctx.strokeRect(L.dd.x + .5, L.dd.y + .5, L.dd.w, L.dd.h);
+
+    // numbering
+    if (c < 8) return;
+    ctx.fillStyle = '#666'; ctx.font = Math.max(8, Math.min(11, c)) + 'px system-ui';
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    for (let s = 0; s < S; s++) ctx.fillText(s + 1, L.thr.x - 4, L.thr.y + (S - 1 - s) * c + c / 2);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    for (let t = 0; t < T; t++) ctx.fillText(t + 1, L.tie.x + t * c + c / 2, L.tie.y - 3);
+  }
+
+  // The drawdown: warp color where the warp is lifted, weft color elsewhere.
+  const hexRgb = h => [1, 3, 5].map(k => parseInt(h.slice(k, k + 2), 16));
+  const clothBuf = document.createElement('canvas');
+  function drawCloth(g, ox, oy, c) {
+    const { N, M } = st, warp = hexRgb($('warpColor').value), weft = hexRgb($('weftColor').value);
+    // one pixel per cell, then scale up without smoothing (fast even for 1px cells)
+    clothBuf.width = N; clothBuf.height = M;
+    const bg = clothBuf.getContext('2d'), img = bg.createImageData(N, M), d = img.data;
+    const pb = $('pascalOn').checked ? pascalBitmap(N, M) : null;
+    for (let j = 0, p = 0; j < M; j++) for (let i = 0; i < N; i++, p += 4) {
+      const col = (pb ? pb[j * N + i] : isWarpUp(i, j)) ? warp : weft;
+      d[p] = col[0]; d[p + 1] = col[1]; d[p + 2] = col[2]; d[p + 3] = 255;
+    }
+    bg.putImageData(img, 0, 0);
+    g.imageSmoothingEnabled = false;
+    g.drawImage(clothBuf, ox, oy, N * c, M * c);
+    if ($('showGrid').checked && c >= 3) {
+      g.strokeStyle = 'rgba(128,128,128,.6)'; g.lineWidth = 1; g.beginPath();
+      for (let i = 0; i <= st.N; i++) { g.moveTo(ox + i * c + .5, oy); g.lineTo(ox + i * c + .5, oy + st.M * c); }
+      for (let j = 0; j <= st.M; j++) { g.moveTo(ox, oy + j * c + .5); g.lineTo(ox + st.N * c, oy + j * c + .5); }
+      g.stroke();
+    }
+  }
+
+  // ---- interaction ----
+  const inside = (r, x, y) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+  canvas.addEventListener('click', e => {
+    const b = canvas.getBoundingClientRect();
+    const x = e.clientX - b.left, y = e.clientY - b.top, L = layout(), { S, c } = st;
+    if (inside(L.thr, x, y)) {
+      const i = Math.floor((x - L.thr.x) / c), s = S - 1 - Math.floor((y - L.thr.y) / c);
+      st.threading[i] = st.threading[i] === s ? -1 : s;
+    } else if (inside(L.tie, x, y)) {
+      const t = Math.floor((x - L.tie.x) / c), s = S - 1 - Math.floor((y - L.tie.y) / c);
+      st.tieup[s][t] = !st.tieup[s][t];
+    } else if (inside(L.tre, x, y)) {
+      const t = Math.floor((x - L.tre.x) / c), j = Math.floor((y - L.tre.y) / c);
+      st.treadling[j] = st.treadling[j] === t ? -1 : t;
+    } else return;
+    $('pascalOn').checked = false;
+    draw();
+  });
+
+  // ---- size handling ----
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v | 0 || lo));
+  const lock = { w:0, h:0 };
+  function resize(e) {
+    const S = clamp($('shafts').value, 2, 24), T = clamp($('treadles').value, 2, 24);
+    let N = clamp($('ends').value, 2, 2000), M = clamp($('picks').value, 2, 2000);
+    const cellChanged = e && (e.target.id === 'cell' || e.target.id === 'cellRange');
+    st.c = clamp($('cell').value, 1, 40);
+    if ($('lockSize').checked) {
+      // changing the cell size rescales ends/picks to fill the same pixel area; editing them redefines that area
+      if (cellChanged) { N = clamp(Math.round(lock.w / st.c), 2, 2000); M = clamp(Math.round(lock.h / st.c), 2, 2000); }
+      else { lock.w = N * st.c; lock.h = M * st.c; }
+    }
+    // new ends/picks repeat the existing sequence; shrinking keeps the tail so growing back restores it
+    const grow = (a, n) => a.length >= n ? a : range(n).map(i => a[i % a.length]);
+    st.threading = grow(st.threading, N).map(s => s >= S ? -1 : s);
+    st.treadling = grow(st.treadling, M).map(t => t >= T ? -1 : t);
+    st.tieup = range(S).map(s => range(T).map(t => !!(st.tieup[s] && st.tieup[s][t])));
+    Object.assign(st, { S, T, N, M });
+    syncInputs();
+    draw();
+  }
+  function syncInputs() {
+    $('shafts').value = st.S; $('treadles').value = st.T; $('ends').value = st.N; $('picks').value = st.M;
+    $('cell').value = st.c; $('cellRange').value = st.c;
+  }
+  ['shafts','treadles','ends','picks','cell'].forEach(id => $(id).addEventListener('change', resize));
+  ['warpColor','weftColor','showGrid'].forEach(id => $(id).addEventListener('input', draw));
+  $('showGrid').addEventListener('change', draw);
+  ['pascalOn','pascalM','pascalLayout','pascalBits','pascalStart','pascalInvert'].forEach(id => $(id).addEventListener('input', draw));
+  $('cellRange').addEventListener('input', e => { $('cell').value = e.target.value; resize(e); });
+  $('lockSize').addEventListener('change', e => { lock.w = st.N * st.c; lock.h = st.M * st.c; });
+
+  // ---- buttons ----
+  $('preset').innerHTML = Object.keys(presets).map(n => `<option>${n}</option>`).join('');
+  $('preset').addEventListener('change', e => applyPreset(e.target.value));
+  $('randomize').onclick = randomize;
+  $('randomThreading').onclick = () => { randomThreading(); draw(); };
+  $('randomTreadling').onclick = () => { randomTreadling(); draw(); };
+  $('randomTieup').onclick = () => { randomTieup(); draw(); };
+  $('clear').onclick = () => {
+    st.tieup = emptyTie(st.S, st.T);
+    st.threading = Array(st.N).fill(-1); st.treadling = Array(st.M).fill(-1);
+    draw();
+  };
+  // fold a sequence back on itself: repeat the first half mirrored
+  const foldSeq = (a, n) => cyc(mirror(a.slice(0, Math.max(2, Math.ceil(n / 4)))), n);
+  $('mirrorThreading').onclick = () => { st.threading = foldSeq(st.threading, st.N); draw(); };
+  $('mirrorTreadling').onclick = () => { st.treadling = foldSeq(st.treadling, st.M); draw(); };
+  $('reverseThreading').onclick = () => { st.threading.reverse(); draw(); };
+  $('reverseTreadling').onclick = () => { st.treadling.reverse(); draw(); };
+  $('straightThreading').onclick = () => { st.threading = cyc(straight(st.S), st.N); draw(); };
+  $('straightTreadling').onclick = () => { st.treadling = cyc(straight(st.T), st.M); draw(); };
+  $('invert').onclick = () => {
+    st.tieup = st.tieup.map(row => row.map(v => !v)); draw();
+  };
+
+  // apply one randomly chosen transform
+  const transformIds = ['mirrorThreading','mirrorTreadling','reverseThreading','reverseTreadling',
+                        'straightThreading','straightTreadling','invert'];
+  $('randomTransform').onclick = () => $(transformIds[rnd(transformIds.length)]).click();
+
+  // ---- export ----
+  const download = (href, name) => { const a = document.createElement('a'); a.href = href; a.download = name; a.click(); };
+  $('exportDraft').onclick = () => download(canvas.toDataURL('image/png'), 'draft.png');
+  $('exportCloth').onclick = () => {
+    const c = st.c, cv = document.createElement('canvas');
+    cv.width = st.N * c; cv.height = st.M * c;
+    drawCloth(cv.getContext('2d'), 0, 0, c);
+    download(cv.toDataURL('image/png'), 'cloth.png');
+  };
+  $('exportJson').onclick = () => {
+    const data = { shafts:st.S, treadles:st.T, threading:st.threading.slice(0, st.N), treadling:st.treadling.slice(0, st.M), tieup:st.tieup };
+    download('data:application/json,' + encodeURIComponent(JSON.stringify(data)), 'draft.json');
+  };
+
+  // start with the picture-like pattern
+  $('preset').value = 'Broken twill (like the picture)';
+  applyPreset('Broken twill (like the picture)');
+})();
+</script>
+</body>
+</html>
